@@ -8,6 +8,10 @@ Desktop.ini
 # Recycle Bin used on file shares
 $RECYCLE.BIN/
 
+# Java class
+
+*.class
+
 # Windows Installer files
 *.cab
 *.msi
