@@ -1,0 +1,75 @@
+package rhinodog.Core
+
+import scala.collection.mutable
+
+import Definitions._
+import BaseTraits._
+import Configuration._
+
+import rhinodog.Core.Iterators._
+
+
+sealed trait BooleanClause
+case class ElementaryClause(termID: Int)extends BooleanClause
+case class ANDClause(terms: Seq[BooleanClause]) extends BooleanClause
+case class ORClause(terms: Seq[BooleanClause]) extends BooleanClause
+
+class QueryEngine
+(dependencies: MainComponents,
+ storage: Storage,
+ estimateUnit: Float = 0f,
+ combineEstimates: (Float, Float) => Float = (a, b) => a + b,
+ // for optimisation in IteratorAND, AdvanceToScore that will be added later
+ subtractEstimates: (Float, Float) => Float = (a, b) => a - b) {
+
+    val floatMinMeaningfulValue = 0.000001f
+
+    //this is iterator for querying persistent data
+    def buildTopLevelIterator(query: BooleanClause): TermIteratorBase = {
+        val snapshotReader = dependencies.repository.getSnapshotReader
+        val totalDocs = storage.totalDocs
+        def getTermIterator(termID: Int) = {
+            val meta = dependencies.metadataManager.getTermMetadata(termID)
+            if(meta.isEmpty)
+                throw new IllegalArgumentException("unable to create Metadata Iterator")
+            else {
+                val metaIterator = new MetaIterator(termID, meta.get, snapshotReader)
+                val termFrequency = meta.get.numberOfDocs
+                new BlocksIterator(metaIterator,
+                                   dependencies.measureSerializer,
+                                   termFrequency,
+                                   totalDocs)
+            }
+        }
+        def mapClauseToIterator(clause: BooleanClause): TermIteratorBase
+        = clause match {
+            case ElementaryClause(termID) => getTermIterator(termID)
+            case ANDClause(children) => new IteratorAND(children.map(mapClauseToIterator),
+                                                        estimateUnit,
+                                                        combineEstimates)
+            case ORClause(children) => new IteratorOR(children.map(mapClauseToIterator),
+                                                      estimateUnit,
+                                                      combineEstimates)
+        }
+        val topLevelIterator = mapClauseToIterator(query)
+        topLevelIterator
+    }
+
+    def executeQuery(topLevelIterator: TermIteratorBase, K: Int): Unit = {
+        val topK = new mutable.PriorityQueue[(Float, Long)]() (Ordering.by(_._1 * -1))
+        var topKPopulated = false
+        while (topLevelIterator.hasNext) {
+            if ((topK.size < K || topLevelIterator.currentScore > topK.head._1)
+                && !dependencies.metadataManager.isDeleted(topLevelIterator.currentDocID)) {
+                topK += ((topLevelIterator.currentScore, topLevelIterator.currentDocID))
+                if (topK.size > K) {
+                    topK.dequeue()
+                    topKPopulated = true
+                }
+            }
+            topLevelIterator.next()
+            if (topKPopulated)
+                topLevelIterator.advanceToScore(topK.head._1 + floatMinMeaningfulValue)
+        }
+    }
+}

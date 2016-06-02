@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component LANGUAGE_LEVEL="JDK_1_8" inheritJdk="true">
+	<output-test url="file://$MODULE_DIR$/target/test-classes"/>
+	<contentEntry url="file://$MODULE_DIR$">
+		<excludeFolder url="file://$MODULE_DIR$/target"/>
+	</contentEntry>
+	<levels>
+		<level name="Maven: me.lemire.integercompression:JavaFastPFOR:0.1.5" value="project"/>
+		<level name="Maven: org.roaringbitmap:RoaringBitmap:0.6.1" value="project"/>
+		<level name="Maven: junit:junit:4.11" value="project"/>
+		<level name="Maven: org.hamcrest:hamcrest-core:1.3" value="project"/>
+		<level name="Maven: org.deephacks.lmdbjni:lmdbjni-win64:0.4.6" value="project"/>
+		<level name="Maven: org.deephacks.lmdbjni:lmdbjni:0.4.6" value="project"/>
+	</levels>
+</component>
