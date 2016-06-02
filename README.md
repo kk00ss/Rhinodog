@@ -4,7 +4,13 @@ Implementation of inverted index on top of LMDB with a some interesting optimiza
 ##WHY? 
 Lucene is huge and old, code quality is great, but it might be hard to extend it in ways that noone thought of before, it's code contains some assumptions made a long time ago which are not that important now,and it's huge and... did I tell you that it's huge? I'm not telling Lucene is bad - I'm just testing new ideas (at least they are new for me :-)).
 
-##Main goals:
+##Current state
+* readiness - guts outside, but components seem ready
+* tests - work in progress, main.scala contains correctness and performance tests for in-memory search which is on par
+          or faster than Lucene (faster when it can skip full segments without decoding based on their metadata) 
+
+
+##Main features:
 *  Use LMDB transaction to maintain consistant state of an index.
 *  Compactions are performed on per term basis, so each of them will be smaller -
    and if for some term there are no changes it's data will not be copied. 
