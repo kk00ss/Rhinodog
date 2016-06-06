@@ -6,8 +6,7 @@ Lucene is huge and old, code quality is great, but it might be hard to extend it
 
 ##Current state
 * readiness - guts outside, but components seem ready
-* tests - work in progress, main.scala contains correctness and performance tests for in-memory search which is on par
-          or faster than Lucene (faster when it can skip full segments without decoding based on their metadata) 
+* tests - work in progress, main.scala contains correctness and performance tests for in-memory search which is close to Lucene. (Updated - with no warm up after index opening current implementation of InvertedIndex might be on par or faster, because of faster warmup)
 
 
 ##Main features:
