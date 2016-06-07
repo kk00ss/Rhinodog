@@ -1,5 +1,5 @@
 # InvertedIndex
-Implementation of inverted index on top of LMDB with a some interesting optimizations. Written for fun, work in progress.
+Implementation of inverted index on top of LMDB with some interesting optimizations. Written for fun, work in progress.
 
 ##WHY? 
 Lucene is huge and old, code quality is great, but it might be hard to extend it in ways that noone thought of before, it's code contains some assumptions made a long time ago which are not that important now,and it's huge and... did I tell you that it's huge? I'm not telling Lucene is bad - I'm just testing new ideas (at least they are new for me :-)).
