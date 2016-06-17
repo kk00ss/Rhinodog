@@ -18,7 +18,6 @@ import java.nio.ByteBuffer
 trait Measure {
     type Self <: Measure
     def compare(that: Self): Int
-    def numberOfBytesRequired: Int
     def score: Float
     def getSerializer: MeasureSerializerBase
 }
@@ -28,7 +27,8 @@ trait MeasureSerializerBase {
         each component is compressed separately
         so Long takes 2 components.
         Dynamic length data types for Measure are not supported */
-    def numberOfComponentsRequired: Int
+    val numberOfComponentsRequired: Int
+    val compressFlags: Seq[Boolean]
     def numberOfBytesRequired: Int
     def scoreFromComponents(components: Array[Array[Int]], measurePosition: Int): Float
     def serialize(m: Measure, buf: ByteBuffer)

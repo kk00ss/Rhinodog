@@ -33,6 +33,7 @@ class TermWriter
                                              config.targetSize)
 
     //for small flush interval during which analysis threads may add documents out of order
+    //TODO: compare with thread-safe data structure
     private var writeCache = SortedSet[DocPosting]()
     private var minDocID = Long.MaxValue
     private var maxDocID = 0l
@@ -41,7 +42,7 @@ class TermWriter
     //for new trees and for compactions, that is why we need withLock functions
     private val addOrFlushLock = new ReentrantLock()
 
-    def getIterator = { new RowSegmentIterator(writeCache.toSeq.sortBy(_.docID)) }
+    def getIterator = { new RowSegmentIterator(writeCache.toSeq) }
 
     def withLock(func: Function0[Unit]) = {
         addOrFlushLock.lock()
@@ -61,12 +62,9 @@ class TermWriter
         return true
     }
 
-    //TODO: investigate different timeouts settings
     /** use increasing timeouts for last terms of the document to finnish it's */
-    def tryAdd(doc: DocPosting, timeout: Long = 0): Boolean = {
-        val attemptResult = addOrFlushLock.tryLock(timeout, TimeUnit.MILLISECONDS)
-        if(!attemptResult)
-            return false
+    def addDocument(doc: DocPosting): Boolean = {
+        addOrFlushLock.lock()
         try {
             //Analysis threads could finnish processing in different order than they started
             if(doc.docID < minDocID) minDocID = doc.docID
@@ -89,7 +87,7 @@ class TermWriter
     def largeFlush() = {
         addOrFlushLock.lock()
         try {
-            val blocks = blocksManager.flushBlocks()
+            val blocks = blocksManager.flushBlocks().values
             for(block <- blocks) {
                 val key = block.key
                 val metaSerialized = serializer.serialize(block.meta)

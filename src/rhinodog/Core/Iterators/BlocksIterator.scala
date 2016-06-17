@@ -16,7 +16,7 @@ package rhinodog.Core.Iterators
 import java.nio.ByteBuffer
 
 import rhinodog.Core.Definitions._
-import BaseTraits.TermIteratorBase
+import BaseTraits.ITermIterator
 import rhinodog.Core.Utils.DocPostingsSerializer
 
 //TODO: add softNot and strongNot which would lower estimate for documents
@@ -25,12 +25,13 @@ class BlocksIterator
 (metaIterator: MetadataIteratorBase,
  measureSerializer: MeasureSerializerBase,
  termFrequency: Long,
- totalDocs: Long) extends TermIteratorBase {
+ totalDocs: Long,
+ useIDF: Boolean = false) extends ITermIterator {
     if(termFrequency == 0)
         throw new IllegalArgumentException("termFrequency cannot be 0, " +
             "term should be excluded from query")
 
-    val IDF: Float = computeIDF
+    lazy val IDF: Float = if(useIDF) computeIDF else 1f
 
     private def computeIDF: Float = {
         val tmp = math.log((totalDocs - termFrequency + 0.5) / (termFrequency + 0.5))
@@ -42,7 +43,7 @@ class BlocksIterator
     private var block:  (Long, BlockInfoBase) = metaIterator.currentElement
     private var blockBuffer: ByteBuffer = ByteBuffer.wrap(block._2.data)
     private var _blockMaxDocID: Long = block._1
-    private var _blockMaxScore: Float = block._2.maxMeasure.score
+    private var _blockMaxScore: Float = block._2.maxMeasure.score * IDF
 
     val numComponents = measureSerializer.numberOfComponentsRequired + 1
     var maxDocIDsOffset = 0 //uninitialized value
@@ -55,7 +56,8 @@ class BlocksIterator
     segmentReadBuffer(0) = new Array[Int](DocPostingsSerializer.segmentSize * 3)
     segmentDecodedBuffer(0) = new Array[Int](DocPostingsSerializer.segmentSize * 3)
     for(i <- 1 to measureSerializer.numberOfComponentsRequired) {
-        segmentReadBuffer(i) = new Array[Int](DocPostingsSerializer.segmentSize)
+        //sometimes compression works the opposite way - so buffers should be a bit larger
+        segmentReadBuffer(i) = new Array[Int](DocPostingsSerializer.segmentSize+16)
         segmentDecodedBuffer(i) = new Array[Int](DocPostingsSerializer.segmentSize)
     }
 
@@ -67,7 +69,7 @@ class BlocksIterator
         maxDocIDsOffset)
 
     def currentDocID: Long = segmentIterator.currentDocID
-    def currentScore: Float = segmentIterator.currentScore
+    def currentScore: Float = segmentIterator.currentScore * IDF
 
     def blockMaxDocID = _blockMaxDocID
     def blockMaxScore = _blockMaxScore
@@ -82,21 +84,26 @@ class BlocksIterator
         block = metaIterator.currentElement
         blockBuffer = ByteBuffer.wrap(block._2.data)
         _blockMaxDocID = block._1
-        _blockMaxScore = block._2.maxMeasure.score
+        _blockMaxScore = block._2.maxMeasure.score * IDF
+        segmentSkip = 0
     }
 
     def nextSegmentMeta() = {
+        if(!hasNextSegment && hasNextBlock)
+            nextBlock()
         if(segmentSkip != 0) {
             blockBuffer.position(blockBuffer.position() + segmentSkip)
         }
         _segmentMaxDocID = blockBuffer.getLong
-        _segmentMaxScore =  measureSerializer.deserialize(blockBuffer).score
+        _segmentMaxScore = blockBuffer.getFloat * IDF
+        //measureSerializer.deserialize(blockBuffer).score
         segmentSkip = blockBuffer.getShort
     }
 
     def initSegmentIterator() = if(segmentSkip != 0) {
         DocPostingsSerializer.readIntoBuffer(blockBuffer, segmentReadBuffer, encodedLengths)
         maxDocIDsOffset = DocPostingsSerializer.decodeIntoBuffer(segmentReadBuffer,
+            measureSerializer.compressFlags,
             segmentDecodedBuffer,
             encodedLengths)
 
@@ -107,7 +114,7 @@ class BlocksIterator
     }
 
     def hasNextBlock: Boolean = metaIterator.hasNext
-    def hasNextSegment: Boolean = blockBuffer.remaining() > 0
+    def hasNextSegment: Boolean = blockBuffer.remaining() > segmentSkip
     def hasNext: Boolean = segmentIterator.hasNext || blockBuffer.remaining() > 0 || metaIterator.hasNext
 
     def next(): Long = {
@@ -162,14 +169,11 @@ class BlocksIterator
                 s" targetDocID = $targetDocID currentDocID = $currentDocID")
         var blockChanged = false
         while (targetDocID > _blockMaxDocID &&  metaIterator.hasNext) {
-            //nextBlock()
             metaIterator.advance(targetDocID)
             block = metaIterator.currentElement
             blockBuffer = ByteBuffer.wrap(block._2.data)
             _blockMaxDocID = block._1
-            _blockMaxScore = block._2.maxMeasure.score
-            //            if(targetDocID > _blockMaxDocID )
-            //            println("block skip - docID - blockIterator")
+            _blockMaxScore = block._2.maxMeasure.score * IDF
             blockChanged = true
         }
         if(blockChanged)
@@ -177,14 +181,10 @@ class BlocksIterator
         var segmentChanged = false
         while (targetDocID > _segmentMaxDocID && blockBuffer.remaining() > segmentSkip) {
             nextSegmentMeta()
-            //            if(targetDocID > _segmentMaxDocID)
-            //            println("segment skip - docID - blockIterator")
             segmentChanged = true
         }
         if(segmentChanged || blockChanged)
             initSegmentIterator()
-        //if(_segmentMaxDocID >= targetDocID)
         segmentIterator.advance(targetDocID)
-        //else -1
     }
 }

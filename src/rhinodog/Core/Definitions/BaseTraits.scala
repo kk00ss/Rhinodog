@@ -15,6 +15,7 @@ package rhinodog.Core.Definitions
 
 
 import java.nio.ByteBuffer
+import rhinodog.Analysis.LocalLexicon
 import rhinodog.Core.Definitions.Caching.BlockCache
 import rhinodog.Core.PartialFlushWAL
 
@@ -24,14 +25,16 @@ import java.util.concurrent.locks.ReentrantReadWriteLock.WriteLock
 
 object BaseTraits {
 
-    trait Analyzer {
-        val analyzerName: String
-        def analyze(text: String,
-                    docMetadata: mutable.Map[String,String],
-                    analyzerConfig: mutable.Map[String,String]): AnalyzedDocument
+    trait IFacetCollector {
+
     }
 
-    trait TermIteratorBase {
+    trait IAnalyzer {
+        val analyzerName: String
+        def analyze(doc: Document, lexicon: LocalLexicon): AnalyzedDocument
+    }
+
+    trait ITermIterator {
         def currentDocID: Long
         def currentScore: Float
 
@@ -54,17 +57,15 @@ object BaseTraits {
         def advance(targetDocID: Long): Long
     }
 
-    trait CompactionJobInterface {
+    trait ICompactionJob {
         val termID: Int
         //returned function should only be run with TermWriter.tryWithLock
         def computeChanges(): SaveChangesHook
     }
 
-    trait CompactionManagerInterface {
+    trait ICompactionManager {
         def blockAddedEvent(termID: Int, key: BlockKey, meta: BlockMetadata): Unit
         def docDeletedEvent(key: BlockKey, meta: BlockMetadata): Unit
-        //might be used to compute adaptive merge factor
-        def updateFreeSpaceRatio(newValue: Float)
     }
 
     case class RestoreMetadataHook
@@ -72,7 +73,7 @@ object BaseTraits {
      processNumDeleted: (BlockKey, Int) => Unit,
      processBitSetSegment: BitSetSegmentSerialized => Unit)
 
-    trait MetadataManagerBase {
+    trait IMetadataManager {
         val restoreMetadataHook: RestoreMetadataHook
         //should only be run with TermWriter.addOrFlushLock
         def addMetadata(blockKey: BlockKey,
@@ -92,38 +93,41 @@ object BaseTraits {
         def flush: MetadataToFlush
     }
 
-    trait SnapshotReaderInterface {
+    trait ISnapshotReader {
         def getBlock(blockKey: BlockKey): BlockDataSerialized
         def seekBlock(termID: Int, docID: Long): (Long, BlockDataSerialized)
         def close(): Unit
     }
 
-    trait RepositoryBase {
+    trait IRepository extends {
+        //Documents related
+        def addDocument(docID: Long, doc: DocumentSerialized): Unit
+        def getDocument(docID: Long): Option[DocumentSerialized]
+        def removeDocument(docID: Long): Unit
+
+        //adds term to lexicon if it wasn't present
+        def getTermID(term: String): Int
+        def getTerm(id: Int): String
+
         // lambda expects termID, metadataSerialized
         def restoreMetadata(restoreMetadataHook: RestoreMetadataHook)
         def getMaxDocID: Long
+        def getTotalDocsCount: Long
 
-        def getSnapshotReader: SnapshotReaderInterface
+        def getSnapshotReader: ISnapshotReader
+        def saveBlock(key: BlockKey,
+                      block: BlockDataSerialized,
+                      metadata: BlockMetadataSerialized): Unit
+        //required for merging
+        def replaceBlocks(deletedBlocks: Seq[BlockKey], blocks: Seq[BlockCache]): Unit
 
         def writePartialFlushWAL(data: PartialFlushWAL): Array[Byte]
         def deletePartialFlushWAL(key: Array[Byte]): Unit
 
-        def saveBlock(key: BlockKey,
-                      block: BlockDataSerialized,
-                      metadata: BlockMetadataSerialized): Unit
-        //required for merging - will be able to substitute saveBlock everywhere
-        def replaceBlocks(deletedBlocks: Seq[BlockKey], blocks: Seq[BlockCache]): Unit
-
         def flush(lastDocIDAssigned: Long,
+                  newTotalDocsCount: Long,
                   storageLock: WriteLock,
                   metadataFlush: MetadataToFlush): Unit
         def close(): Unit
-
-        def addDocument(docID: Long, doc: DocumentSerialized): Unit
-        def getDocument(docID: Long): Option[DocumentSerialized]
-        def removeDocument(docID: Long): Unit
-        //adds term to lexicon if it wasn't present
-        def getTermID(term: String): Int
-        def getTerm(id: Int): String
     }
 }

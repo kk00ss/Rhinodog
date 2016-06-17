@@ -46,6 +46,7 @@ class SerializedSegmentIterator
     else {
         computeScore()
         changed = false
+        //println(_currentScore)
         _currentScore
     }
 

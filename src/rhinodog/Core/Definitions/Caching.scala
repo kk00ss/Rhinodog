@@ -31,7 +31,7 @@ object Caching {
      addedMeta: ConcurrentSkipListMap[BlockKey, BlockMetadataSerialized],
      newTerms: ConcurrentHashMap[String, Int],
      deletedBlocks: ConcurrentSkipListSet[BlockKey],
-     docs:DocsChangesCache,
+     docs: DocsChangesCache,
      partialFlushInfosToAdd: ConcurrentSkipListMap[Array[Byte], Array[Byte]],
      partialFlushInfosToDELETE: ConcurrentLinkedQueue[Array[Byte]]) {
         def this() = this(

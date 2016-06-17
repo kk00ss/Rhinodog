@@ -18,12 +18,14 @@ import java.util.concurrent.locks.ReentrantReadWriteLock
 
 import Definitions._
 import Configuration._
+import rhinodog.Analysis.LocalLexicon
+import rhinodog.Core.Definitions.BaseTraits.IAnalyzer
 
-//TODO: Implement InvertedIndex with higher abstraction, which will be able to have
-//TODO: multiply storage engines for indexing performance
+//TODO: Config and measureSerializer type name could be read from storage if index is already initialized, or at least check if they are the same
 class InvertedIndex
-(val config: GlobalConfig,
- val measureSerializer: MeasureSerializerBase) {
+(val measureSerializer: MeasureSerializerBase,
+ val analyzer: IAnalyzer,
+ val storageMode: storageModeEnum.storageMode = storageModeEnum.READ_WRITE) {
     // этот лок нужен только для того что бы флаш случился только после того
     // как определённый неявный набор документов
     // был проанализирован - только для предсказуемого поведения,
@@ -31,45 +33,53 @@ class InvertedIndex
     // должны быть проанализированны в том же flush / transaction)
     private val sharedExclusiveLock = new ReentrantReadWriteLock(true)
     private var storage: Storage = null
+    private var _mainComponents: MainComponents = null
+    private var queryEnginge: QueryEngine = null
+
+    def getQueryEngine() = queryEnginge
 
     @volatile
     private var isClosed = false
 
     init()
-    private def init() = {
-        val repository = new Repository(config)
-        val metadataManager = new MetadataManager(config, measureSerializer)
 
-        val mainComponents = MainComponents(measureSerializer,repository,metadataManager) //,null)
-//        val blockReader = new BlockReader(mainComponents)
-//        mainComponents.blockReader = blockReader
-        val compactionManager = new CompactionManager(config, mainComponents)
-        val storageConfig = StorageConfig(config, mainComponents, compactionManager.updateFreeSpaceRatio)
-        this.storage = new Storage(storageConfig)
+    private def init() = {
+        val watermark = "measureSerializer name: " + measureSerializer.getClass.getCanonicalName +
+            " analyzer name: " + analyzer.getClass.getCanonicalName
+        val repository = new Repository(storageMode, watermark)
+        val metadataManager = new MetadataManager(measureSerializer)
+
+        val mainComponents = MainComponents(measureSerializer, repository, metadataManager)
+        val compactionManager = new CompactionManager(mainComponents)
+        this.storage = new Storage(mainComponents)
 
         compactionManager.addCompactionJob = this.storage.addCompactionJob
         metadataManager.mergeDetector = compactionManager
         repository.restoreMetadata(metadataManager.restoreMetadataHook)
+        this.queryEnginge = new QueryEngine(mainComponents, storage)
+        this._mainComponents = mainComponents
     }
 
     //diagnostics only
     val nAnalysisThreadsActive = new AtomicInteger(0)
 
     /*returns ID of a new document, or -1 if failed to create one*/
-    def addDocument(text: String): Long = {
-        if(isClosed)
+    def addDocument(document: Document): Long = {
+        if (isClosed)
             throw new IllegalStateException("Index is closed")
         val sharedLock = sharedExclusiveLock.readLock()
         sharedLock.lock()
         nAnalysisThreadsActive.incrementAndGet()
         var docID = -1l
         try {
-            //do stuff
-            //analyze
-            val docInfo: AnalyzedDocument = null
-            docID = storage.addDocument(docInfo)
+            //TODO: Implement pooling ?
+            val lexicon = new LocalLexicon(_mainComponents.repository)
+            val analyzedDocument = analyzer.analyze(document, lexicon)
+            docID = storage.addDocument(analyzedDocument)
         } catch {
-            case e: Exception => { e.printStackTrace() }
+            case e: Exception => {
+                e.printStackTrace()
+            }
         } finally {
             nAnalysisThreadsActive.decrementAndGet()
             sharedLock.unlock()
@@ -78,7 +88,7 @@ class InvertedIndex
     }
 
     def removeDocument(docID: Long): Unit = {
-        if(isClosed)
+        if (isClosed)
             throw new IllegalStateException("Index is closed")
         val sharedLock = sharedExclusiveLock.readLock()
         sharedLock.lock()
@@ -102,7 +112,8 @@ class InvertedIndex
                 e.printStackTrace()
             }
         } finally {
-            exclusiveLock.unlock()
+            if(exclusiveLock.isHeldByCurrentThread)
+                exclusiveLock.unlock()
         }
     }
 

@@ -13,7 +13,10 @@
 // limitations under the License.
 package rhinodog.Core.Definitions
 
+import com.netflix.config.DynamicPropertyFactory
 import rhinodog.Core.Definitions.BaseTraits._
+
+import scala.collection.mutable
 
 object Configuration {
     // Constants
@@ -24,69 +27,58 @@ object Configuration {
     object storageModeEnum
         extends Enumeration {
         type storageMode = this.Value
-        val READONLY, WRITEnREAD, CREATE = this.Value
-    }
-
-    case class StorageConfig
-    (globalConfig: GlobalConfig,
-     mainComponents: MainComponents,
-     updateFreeSpaceRatio: Function[Float,Unit] = null)
-
-    case class GlobalConfig
-    (bitSetSegmentRange: Int = Short.MaxValue,
-     //interval in milliseconds
-     smallFlushInterval: Long = 1000,
-     //number of small flushes per one large flush
-     largeFlushInterval: Int = 5,
-     // 16 bytes are for LMDB overflow pages info
-     pageSize: Int = 4 * KB,
-     //LMDB folder
-     path: String = "storageFolder",
-     maxConcurrentCompactions: Short = 4,
-     //storage space is acquired in chunks of this size
-     mapSizeIncreaseStep: Int = 1 * GB,
-     //blockSize: Int = 256 * KB - 16, //don't need it because of partial reads
-     storageMode: storageModeEnum.storageMode = storageModeEnum.CREATE,
-     //delay in ms - we need it to decouple compactions from analysis threads
-     merges_QueueCheckInterval: Long = 100,
-     //async compactions will not start if the system CPU load is more than this
-     merges_CpuLoadThreshold: Float = 0.95f,
-     // compactions are only performed to reclaim space used by deleted documents
-     // there is no need for further consolidation of data if it is already stored
-     // in blocks of size (page size)
-     // TODO: variable compaction factor based on the abount of free space
-     merges_CompactionFactor: Short =  2,
-     // min size of merge, larger value means merge will happen later,
-     // but will affect performance of other tasks
-     // value should be large enough to benefit sequential read/write performance
-     // merges are expected to be quite small
-     // all merges are performed on separate thread
-     // NOT IN USE: for large merges there is multi-step implementation, every step is of this size
-     merges_MinSize: Int = 256 * KB,
-     // max size of merge
-     // max size of merge doesn't mean it will be max size of a single transaction commit
-     // because the later may contain many merges, currently this number is not restricted
-     // same size for both means that merge will be triggered after reaching the threshold,
-     // but only part of the data will go into compactionLevel1
-     merges_MaxSize: Int = 256 * KB) {
-        def targetBlockSize: Int = pageSize - 16 // should always be pageSize - 16
-        //should be larger than max size of DocPosting in bytes
-        def maxNodeUnderflow: Int = {
-            val tmp = pageSize / 20
-            if(tmp < 10) 10
-            else tmp
-        }
+        val READ_ONLY, READ_WRITE, CREATE = this.Value
     }
 
     case class MainComponents
     (measureSerializer: MeasureSerializerBase,
-     repository: RepositoryBase,
-     metadataManager: MetadataManagerBase)
+     repository: IRepository,
+     metadataManager: IMetadataManager)
 
     case class TermWriterConfig
     (termID: Int,
      mainComponents: MainComponents,
-     targetSize: Int,
-     maxNodeUnderflow: Int)
+     targetSize: Int)
 
+    object GlobalConfig {
+        val propFactory = DynamicPropertyFactory.getInstance()
+        // number of docIDs for which there will be single bitmap segment
+        // smaller value means less efficient encoding, but less data to write on change
+        def bitSetSegmentRange = propFactory.getIntProperty("bitSetSegmentRange", Short.MaxValue).get()
+        //interval in milliseconds
+        def smallFlushInterval = propFactory.getLongProperty("smallFlushInterval", 200).get()
+        //number of small flushes per one large flush
+        def largeFlushInterval = propFactory.getIntProperty("largeFlushInterval", 5).get()
+        def pageSize = propFactory.getIntProperty("pageSize", 4*KB).get()
+        def targetBlockSize: Int = pageSize - 16 // should always be pageSize - 16
+        //LMDB folder will be path + '\'+"InvertedIndex"
+        def path = propFactory.getStringProperty("path","storageFolder").get
+        //storage space is acquired in chunks of this size
+        def mapSizeIncreaseStep = propFactory.getIntProperty("mapSizeIncreaseStep", 1*GB).get()
+        //since compaction should be all small, it's unclear for now which value is better
+        def merges_maxConcurrent = propFactory.getIntProperty("merges.maxConcurrent", 4).get()
+        //blockSize: Int = 256 * KB - 16, //don't need it because of partial reads
+        //delay in ms - we need it to decouple compactions from analysis threads
+        def merges_queueCheckInterval = propFactory.getLongProperty("merges.queueCheckInterval", 100).get()
+        //async compactions will not start if the system CPU load is more than this
+        def merges_cpuLoadThreshold = propFactory.getFloatProperty("merges.cpuLoadThreshold", 0.95f).get()
+        // compactions are only performed to reclaim space used by deleted documents
+        // there is no need for further consolidation of data if it is already stored
+        // in blocks of size (page size)
+        // CHANGING THIS VALUE IS NOT RECOMENDED
+        def merges_compactionFactor = propFactory.getIntProperty("merges.compactionFactor",2).get()
+        // min size of merge, larger value means merge will happen later,
+        // but will affect performance of other tasks
+        // value should be large enough to benefit sequential read/write performance
+        // merges are expected to be quite small
+        // all merges are performed on separate thread
+        // NOT IN USE: for large merges there is multi-step implementation, every step is of this size
+        def merges_minSize = propFactory.getIntProperty("merges.minSize", 256 * KB).get()
+        // max size of merge
+        // max size of merge doesn't mean it will be max size of a single transaction commit
+        // because the later may contain many merges
+        // single commit size is not restricted for now
+        // same size for both means that merge will be triggered after reaching the threshold
+        def merges_MaxSize = propFactory.getIntProperty("merges.minSize", 4 * MB).get()
+    }
 }

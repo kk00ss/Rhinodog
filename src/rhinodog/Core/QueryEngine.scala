@@ -31,16 +31,14 @@ class QueryEngine
 (dependencies: MainComponents,
  storage: Storage,
  estimateUnit: Float = 0f,
- combineEstimates: (Float, Float) => Float = (a, b) => a + b,
- // for optimisation in IteratorAND, AdvanceToScore that will be added later
- subtractEstimates: (Float, Float) => Float = (a, b) => a - b) {
+ combineEstimates: (Float, Float) => Float = (a, b) => a + b) {
 
     val floatMinMeaningfulValue = 0.000001f
 
     //this is iterator for querying persistent data
-    def buildTopLevelIterator(query: BooleanClause): TermIteratorBase = {
+    def buildTopLevelIterator(query: BooleanClause): ITermIterator = {
         val snapshotReader = dependencies.repository.getSnapshotReader
-        val totalDocs = storage.totalDocs
+        val totalDocs = storage.totalDocsCount
         def getTermIterator(termID: Int) = {
             val meta = dependencies.metadataManager.getTermMetadata(termID)
             if(meta.isEmpty)
@@ -54,7 +52,7 @@ class QueryEngine
                                    totalDocs)
             }
         }
-        def mapClauseToIterator(clause: BooleanClause): TermIteratorBase
+        def mapClauseToIterator(clause: BooleanClause): ITermIterator
         = clause match {
             case ElementaryClause(termID) => getTermIterator(termID)
             case ANDClause(children) => new IteratorAND(children.map(mapClauseToIterator),
@@ -68,10 +66,10 @@ class QueryEngine
         topLevelIterator
     }
 
-    def executeQuery(topLevelIterator: TermIteratorBase, K: Int): Unit = {
+    def executeQuery(topLevelIterator: ITermIterator, K: Int): mutable.PriorityQueue[(Float, Long)] ={
         val topK = new mutable.PriorityQueue[(Float, Long)]() (Ordering.by(_._1 * -1))
         var topKPopulated = false
-        while (topLevelIterator.hasNext) {
+        while (topLevelIterator.currentDocID != -1) {
             if ((topK.size < K || topLevelIterator.currentScore > topK.head._1)
                 && !dependencies.metadataManager.isDeleted(topLevelIterator.currentDocID)) {
                 topK += ((topLevelIterator.currentScore, topLevelIterator.currentDocID))
@@ -84,5 +82,6 @@ class QueryEngine
             if (topKPopulated)
                 topLevelIterator.advanceToScore(topK.head._1 + floatMinMeaningfulValue)
         }
+        topK
     }
 }

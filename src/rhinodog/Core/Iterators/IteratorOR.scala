@@ -13,18 +13,18 @@
 // limitations under the License.
 package rhinodog.Core.Iterators
 
-import rhinodog.Core.Definitions.BaseTraits.TermIteratorBase
+import rhinodog.Core.Definitions.BaseTraits.ITermIterator
 
 import scala.collection.mutable.ArrayBuffer
 
-class IteratorOR(components: Seq[TermIteratorBase],
+class IteratorOR(components: Seq[ITermIterator],
                  estimateUnit: Float = 0f,
                  combineEstimates: (Float, Float) => Float
-                 = (a, b) => a + b) extends TermIteratorBase {
+                 = (a, b) => a + b) extends ITermIterator {
 
     var positionChanged = true
-    var _currentDocID: Long = -1
-    var _currentScore: Float = -1
+    var _currentDocID: Long = -2
+    var _currentScore: Float = -2
 
     updateSmallestPosition()
 
@@ -45,21 +45,45 @@ class IteratorOR(components: Seq[TermIteratorBase],
         positionChanged = false
     }
 
-    def hasNextBlock: Boolean = components.exists(_.hasNextBlock)
+    def hasNextBlock: Boolean = if(_currentDocID != -1) {
+        var minComponent = components.head
+        for(c <- components.tail)
+            if(c.currentDocID != -1 && c.segmentMaxDocID < minComponent.segmentMaxDocID)
+                minComponent = c
+        minComponent.hasNextBlock
+    } else false
 
-    def hasNextSegment: Boolean = components.exists(_.hasNextSegment)
+    def hasNextSegment: Boolean = if(_currentDocID != -1) {
+        var minComponent = components.head
+        for(c <- components.tail)
+            if(c.currentDocID != -1 && c.segmentMaxDocID < minComponent.segmentMaxDocID)
+                minComponent = c
+        minComponent.hasNextSegment
+    } else false
 
-    def hasNext: Boolean = components.exists(_.hasNext)
+
+    def hasNext: Boolean = if(_currentDocID != -1) {
+        val ret = components.exists(_.currentDocID != -1)
+        if(!ret) _currentDocID = -1
+        ret
+    } else false
 
     def blockMaxDocID: Long = components.minBy(_.blockMaxDocID).blockMaxDocID
 
-    def blockMaxScore: Float = components.map(_.blockMaxScore).sum
-
+    def blockMaxScore: Float = {
+        var ret = estimateUnit
+        components.foreach(c => ret = combineEstimates(c.blockMaxScore, ret))
+        ret
+    }
     def segmentMaxDocID: Long = components.minBy(_.segmentMaxDocID).blockMaxDocID
 
-    def segmentMaxScore: Float = components.map(_.segmentMaxScore).sum
+    def segmentMaxScore: Float = {
+        var ret = estimateUnit
+        components.foreach(c => ret = combineEstimates(c.segmentMaxScore, ret))
+        ret
+    }
 
-    var movedComponents = ArrayBuffer[TermIteratorBase]()
+    var movedComponents = ArrayBuffer[ITermIterator]()
 
     def nextBlock() = {
         val componentToMove = components.minBy(_.blockMaxDocID)
@@ -109,8 +133,10 @@ class IteratorOR(components: Seq[TermIteratorBase],
                     if (blockMaxScore < targetScore)
                         exitFlag = true
                 }
+            } else if(!hasNextBlock && !hasNextSegment) {
+                positionChanged = true
+                _currentDocID = -1
             }
-
         }
         return currentDocID
     }
@@ -129,12 +155,15 @@ class IteratorOR(components: Seq[TermIteratorBase],
     }
 
     def next(): Long = {
-        for (i <- components.indices)
-            if (components(i).currentDocID == _currentDocID) {
-                components(i).next()
-            }
-        positionChanged = true
-        updateSmallestPosition()
+        if(hasNext) {
+            for (i <- components.indices)
+                if (components(i).currentDocID == _currentDocID) {
+                    components(i).next()
+                }
+            positionChanged = true
+            updateSmallestPosition()
+        }
+        return _currentDocID
     }
 
     //    def advance(targetScore: Float): Long = {
@@ -144,7 +173,7 @@ class IteratorOR(components: Seq[TermIteratorBase],
     //    }
 
     def advance(targetDocID: Long): Long = {
-        if (targetDocID != _currentDocID) {
+        if (hasNext && targetDocID != _currentDocID) {
             components.foreach(_.advance(targetDocID))
             positionChanged = true
             updateSmallestPosition()

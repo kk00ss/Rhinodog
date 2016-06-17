@@ -13,15 +13,15 @@
 // limitations under the License.
 package rhinodog.Core.Iterators
 
-import rhinodog.Core.Definitions.BaseTraits.TermIteratorBase
+import rhinodog.Core.Definitions.BaseTraits.ITermIterator
 
 import scala.collection.mutable.ArrayBuffer
 
-class LayeredIterator(layers: Seq[TermIteratorBase]) extends TermIteratorBase {
+class LayeredIterator(layers: Seq[ITermIterator]) extends ITermIterator {
 
     var positionChanged = true
-    var _currentDocID: Long = -1
-    var _currentScore: Float = -1
+    var _currentDocID: Long = -2
+    var _currentScore: Float = -2
 
     updateSmallestPosition()
 
@@ -36,7 +36,6 @@ class LayeredIterator(layers: Seq[TermIteratorBase]) extends TermIteratorBase {
 
     def computeScore() = {
         _currentScore = 0
-        //there should be exactly one layer with particular docID
         _currentScore = layers.find(_.currentDocID == _currentDocID)
                               .get.currentScore
         positionChanged = false
@@ -46,17 +45,21 @@ class LayeredIterator(layers: Seq[TermIteratorBase]) extends TermIteratorBase {
 
     def hasNextSegment: Boolean = layers.exists(_.hasNextSegment)
 
-    def hasNext: Boolean = layers.exists(_.hasNext)
+    def hasNext: Boolean = if(_currentDocID != -1) {
+        val ret = layers.exists(_.currentDocID != -1)
+        if(!ret) _currentDocID = -1
+        ret
+    } else false
 
     def blockMaxDocID: Long = layers.minBy(_.blockMaxDocID).blockMaxDocID
 
-    def blockMaxScore: Float = layers.map(_.blockMaxScore).sum
+    def blockMaxScore: Float = layers.maxBy(_.blockMaxScore).blockMaxScore
 
     def segmentMaxDocID: Long = layers.minBy(_.segmentMaxDocID).blockMaxDocID
 
-    def segmentMaxScore: Float = layers.map(_.segmentMaxScore).sum
+    def segmentMaxScore: Float = layers.maxBy(_.segmentMaxScore).segmentMaxScore
 
-    var movedComponents = ArrayBuffer[TermIteratorBase]()
+    var movedComponents = ArrayBuffer[ITermIterator]()
 
     def nextBlock() = {
         val componentToMove = layers.minBy(_.blockMaxDocID)
@@ -97,16 +100,18 @@ class LayeredIterator(layers: Seq[TermIteratorBase]) extends TermIteratorBase {
     }
 
     def next(): Long = {
-        for (i <- layers.indices)
-            if (layers(i).currentDocID == _currentDocID) {
-                layers(i).next()
-            }
-        positionChanged = true
-        updateSmallestPosition()
+         if(hasNext) {
+		for (i <- layers.indices)
+        	    if (layers(i).currentDocID == _currentDocID)
+        	       layers(i).next()
+        	positionChanged = true
+        	updateSmallestPosition()
+	}
+        return _currentDocID
     }
 
     def advance(targetDocID: Long): Long = {
-        if (targetDocID != _currentDocID) {
+        if (hasNext && targetDocID != _currentDocID) {
             layers.foreach(_.advance(targetDocID))
             positionChanged = true
             updateSmallestPosition()

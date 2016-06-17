@@ -51,24 +51,8 @@ case class PartialFlushWAL(blockKeys: Seq[BlockKey]) {
 // 2-nd PHAZE - reclaim space used by deleted docs - compactions
 
 //TODO: test behaviour when storage is already closed
-class CompactionManager
-(config: GlobalConfig,
- dependencies: MainComponents) extends CompactionManagerInterface {
-
-    import config._
-
-    //TODO: track LMDB map free space ratio rather than FS's
-    //private var freeSpaceRatio: Float = 0
-    //private var minCompactionSize: Int = 2
-    def updateFreeSpaceRatio(newValue: Float) = {
-        //ignoring updates and only merging two blocks at a time
-        //this.freeSpaceRatio = newValue
-        //we can choose to merge more blocks with smaller fraction of deleted documents
-
-        //val effectiveFSR = if(freeSpaceRatio >= 0.5) freeSpaceRatio
-        //else 0.5f
-        //minCompactionSize = math.round(1/effectiveFSR)
-    }
+class CompactionManager(dependencies: MainComponents) extends ICompactionManager {
+    import GlobalConfig._
 
     //special key = Int.MaxValue for trees that are larger than maxCompactionSize / compactionFactor
     val compactionInfo = new ConcurrentHashMap[Int, TermCompactionInfo]()
@@ -80,7 +64,7 @@ class CompactionManager
      var zeroLevelSize: Int = 0)
 
     //(job, executeImmediately) => Unit
-    var addCompactionJob: Function1[CompactionJobInterface, Unit] = null
+    var addCompactionJob: Function1[ICompactionJob, Unit] = null
     val separateThreadExecution = true
 
     //should be executed with TermWriterLock (from MetadataManager.addMetadata )
@@ -89,7 +73,7 @@ class CompactionManager
         val termCompactionInfo = compactionInfo.get(termID)
         termCompactionInfo.zeroLevelSize += meta.encodedSize
         termCompactionInfo.levelZero += key
-        if (termCompactionInfo.zeroLevelSize >= merges_MinSize) {
+        if (termCompactionInfo.zeroLevelSize >= merges_minSize) {
             val mergeJob = BaseCompactionJob(termID, termCompactionInfo.levelZero.toSeq)
             termCompactionInfo.levelZero = TreeSet()
             termCompactionInfo.zeroLevelSize = 0
@@ -97,22 +81,29 @@ class CompactionManager
         }
     }
 
+    //should be executed with TermWriterLock (from MetadataManager.deleteFromTerm )
     def docDeletedEvent(key: BlockKey, meta: BlockMetadata) = {
         compactionInfo.putIfAbsent(key.termID, TermCompactionInfo())
         val termCompactionInfo = compactionInfo.get(key.termID)
         termCompactionInfo.levelOne += ((key, meta.fillFactor))
-        val fillFactorThreshold = 1f / merges_CompactionFactor
+        val fillFactorThreshold = 1f / merges_compactionFactor
         if (meta.fillFactor < fillFactorThreshold) {
             val keys = termCompactionInfo.levelOne
                 .iteratorFrom(key)
                 .takeWhile(_._2 < fillFactorThreshold)
                 .map(_._1)
             val estimatedCompactionSize = keys.length * pageSize
-            if (estimatedCompactionSize >= merges_MinSize) {
+            if (estimatedCompactionSize >= merges_minSize) {
                 val nBlocks = merges_MaxSize / pageSize
                 val keysToCompact = keys.take(nBlocks).toSeq
                 val compactionJob = BaseCompactionJob(key.termID, keysToCompact)
                 keysToCompact.foreach(key => termCompactionInfo.levelOne -= key)
+                // Dummy mark that indicates that there are blocks in scheduled compaction
+                // so this block (doc range) shouldn't be included in any compactions
+                // until previous one is completed
+                // (10 is larger than possible values of fillFactorThreshold)
+                // should be removed before saving new blocks compaction info
+                termCompactionInfo.levelOne += ((keysToCompact.last, 10))
                 addCompactionJob(compactionJob)
             }
         }
@@ -120,7 +111,7 @@ class CompactionManager
 
 
     case class BaseCompactionJob(termID: Int,
-                                 keys: Seq[BlockKey]) extends CompactionJobInterface {
+                                 keys: Seq[BlockKey]) extends ICompactionJob {
         val docPostingsSerializer = new DocPostingsSerializer(dependencies.measureSerializer)
         val serializer = MetadataSerializer(dependencies.measureSerializer)
 
@@ -154,11 +145,11 @@ class CompactionManager
 
         def partitionIntoBlocks(data: Seq[DocPosting]): Seq[BlockInfoRAM] = {
             val blocksManager = new BlocksWriter(dependencies.measureSerializer,
-                termID,
-                config.targetBlockSize)
+                                                 termID,
+                                                 targetBlockSize)
             for (posting <- data)
                 blocksManager.add(posting)
-            blocksManager.flushBlocks()
+            blocksManager.flushBlocks().values.toSeq
         }
 
 
@@ -175,6 +166,7 @@ class CompactionManager
                 withStorageLock(() => withTermWriterLock(() => saveChangesSync(keys, blocks)))
 
         //NOT THREAD-SAFE SHOULD BE EXECUTED WITH STORAGE AND TERM-WRITER LOCKS
+        //assumption is that keys is sorted as it was at the moment of scheduling
         def saveChangesSync(keys: Seq[BlockKey], blocks: Seq[Definitions.BlockInfoRAM]) = {
             val blocksCaches = blocks.map(block => {
                 val metaSerialized = serializer.serialize(block.meta)
@@ -186,7 +178,8 @@ class CompactionManager
             //Saving compaction info about newly created blocks
             compactionInfo.putIfAbsent(termID, TermCompactionInfo())
             val termCompactionInfo = compactionInfo.get(termID)
-            //TODO: maybe add block with underflow to levelZero
+            //removing dummy mark
+            termCompactionInfo.levelOne -= keys.last
             blocks.foreach(block => {
                 termCompactionInfo.levelOne += ((block.key, block.meta.fillFactor))
             })
@@ -210,6 +203,7 @@ class CompactionManager
             }
         }
 
+        //can save changes in multiply different LMDB transactions, using partialFlushWAL
         def saveChangesAsync(keys: Seq[BlockKey], _blocks: Seq[Definitions.BlockInfoRAM]): SaveChangesHook =
             (withStorageLock: WithLockFunc, withTermWriterLock: WithLockFunc) => {
                 var blocks = _blocks
@@ -253,7 +247,8 @@ class CompactionManager
                         //Saving compaction info about newly created blocks
                         compactionInfo.putIfAbsent(termID, TermCompactionInfo())
                         val termCompactionInfo = compactionInfo.get(termID)
-                        //TODO: maybe add block with underflow to levelZero
+                        //removing dummy mark
+                        termCompactionInfo.levelOne -= keys.last
                         blocks.foreach(block => {
                             termCompactionInfo.levelOne += ((block.key, block.meta.fillFactor))
                         })

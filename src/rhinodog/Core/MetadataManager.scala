@@ -27,10 +27,8 @@ import rhinodog.Core.Utils._
 import java.util.concurrent._
 
 /*Thread safety of flush is not guarantied*/
-case class MetadataManager
-(globalConfig: GlobalConfig,
- measureSerializer: MeasureSerializerBase)
-    extends MetadataManagerBase {
+case class MetadataManager(measureSerializer: MeasureSerializerBase)
+    extends IMetadataManager {
     //========= METADATA STATE =================================================
     //TermID -> TermMetadata
     private val metadataByTerm = new ConcurrentHashMap[Int, TermMetadata]()
@@ -50,7 +48,7 @@ case class MetadataManager
     }
     //========= Utils =================================================================
     val serializer = MetadataSerializer(measureSerializer)
-    var mergeDetector: CompactionManagerInterface = null
+    var mergeDetector: ICompactionManager = null
 
     /* 0 indicates that term metadata is absent */
     override def getNumberOfDocs(termID: Int): Long = {
@@ -94,8 +92,8 @@ case class MetadataManager
     //========== METADATA MANAGEMENT ===================================================
     /* returns key: Long, docIDinRange: Int */
     private def bitSetSegmentKey(docID: Long): (Long, Int) = {
-        val key = docID / globalConfig.bitSetSegmentRange
-        val docIDinRange = (docID % globalConfig.bitSetSegmentRange).asInstanceOf[Int]
+        val key = docID / GlobalConfig.bitSetSegmentRange
+        val docIDinRange = (docID % GlobalConfig.bitSetSegmentRange).asInstanceOf[Int]
         return (key, docIDinRange)
     }
 

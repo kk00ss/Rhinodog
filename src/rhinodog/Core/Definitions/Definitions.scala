@@ -13,12 +13,15 @@
 // limitations under the License.
 package rhinodog.Core
 
-import rhinodog.Core.Definitions.BaseTraits.SnapshotReaderInterface
+import rhinodog.Core.Definitions.BaseTraits.ISnapshotReader
 
 import scala.collection._
 import scala.collection.immutable.TreeMap
 
 package object Definitions {
+
+    case class IndexProperties()
+
     case class DocPosting
     (docID: Long, measure: Measure) extends Ordered[DocPosting] {
         if (docID == 0) throw new IllegalArgumentException("DocID should start from 1, not zero")
@@ -30,6 +33,10 @@ package object Definitions {
     (termID: Int,
      measure: Measure)
 
+    case class Document
+    (text: String,
+     docMetadata: mutable.Map[String, String] = mutable.Map[String, String]())
+
     case class AnalyzedDocument
     (text: String,
      terms: Seq[DocTerm],
@@ -40,6 +47,7 @@ package object Definitions {
     case class Segment
     (maxDocID: Long,
      maxMeasure: Measure,
+     totalDocs: Int,
      data: SegmentSerialized)
 
     type BlockDataSerialized = Array[Byte]
@@ -67,7 +75,7 @@ package object Definitions {
     case class BlockInfo
     (key: BlockKey,
      meta: BlockMetadata,
-     snapshotReader: SnapshotReaderInterface)
+     snapshotReader: ISnapshotReader)
         extends BlockInfoBase with Ordered[BlockInfo] {
         def maxDocID = key.maxDocID
         def maxMeasure = meta.maxMeasureValue

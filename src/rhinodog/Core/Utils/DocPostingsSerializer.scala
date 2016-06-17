@@ -109,16 +109,25 @@ object DocPostingsSerializer {
         }
     }
 
-    def decodeComponents(components: SegmentSerialized): SegmentSerialized = {
-        val decompressedComponents = components.map(IntegerEncoder.decodeInt)
-        return decompressedComponents //components
+    def decodeComponents(components: SegmentSerialized,
+                         compressFlags: Seq[Boolean]): SegmentSerialized = {
+        val decompressedComponents = new SegmentSerialized(components.length)
+        var i = 0
+        while(i < components.length) {
+            val c = components(i)
+            val flag = if(i ==0) true else compressFlags(i-1)
+            decompressedComponents(i) = if (flag) IntegerEncoder.decodeInt(c) else c
+            i += 1
+        }
+        return decompressedComponents
     }
 
     def decodeIntoBuffer(components: SegmentSerialized,
+                         compressFlags: Seq[Boolean],
                          buffer: SegmentSerialized,
                          lengths: Array[Int]): Int = {
         if(components.length != buffer.length ||
-        buffer.head.length < segmentSize * 3)
+            buffer.head.length < segmentSize * 3)
             throw new IllegalArgumentException("wrong buffer size")
 
         val maxDocIDsOffset = new IntWrapper()
@@ -130,21 +139,34 @@ object DocPostingsSerializer {
             maxDocIDsOffset,
             components(0)(0))
 
-        components.indices.drop(1).foreach( i =>
-        IntegerEncoder.codec.headlessUncompress(
-            components(i),
-            new IntWrapper(1),
-            lengths(i) - 1,
-            buffer(i),
-            new IntWrapper(),
-            components(i)(0)))
+        components.indices.drop(1).foreach( i => {
+            val flag = if(i ==0) true else compressFlags(i-1)
+            if(flag) {
+                val maxOffset = new IntWrapper()
+                IntegerEncoder.codec.headlessUncompress(
+                    components(i),
+                    new IntWrapper(1),
+                    lengths(i) - 1,
+                    buffer(i),
+                    maxOffset,
+                    components(i)(0))
+            } else components(i).copyToArray(buffer(i))
+        })
 
         return maxDocIDsOffset.get()
     }
 
-    def encodeComponents(components: SegmentSerialized): SegmentSerialized = {
-        val compressedComponents = components.map(IntegerEncoder.encodeInt)
-        return compressedComponents //components
+    def encodeComponents(components: SegmentSerialized,
+                         compressFlags: Seq[Boolean]): SegmentSerialized = {
+        val compressedComponents = new SegmentSerialized(components.length)
+        var i = 0
+        while(i < components.length) {
+            val c = components(i)
+            val flag = if(i ==0) true else compressFlags(i-1)
+            compressedComponents(i) = if (flag) IntegerEncoder.encodeInt(c) else c
+            i += 1
+        }
+        return compressedComponents
     }
 }
 
@@ -182,12 +204,14 @@ class DocPostingsSerializer
         }
         components(0) = inputDocIDs.toArray
         //saving metadata/framing protocol
-            return DocPostingsSerializer.encodeComponents(components)
+            return DocPostingsSerializer.encodeComponents(components,
+                measureSerializer.compressFlags)
         } else return new SegmentSerialized(0)
     }
 
     def decodeFromComponents(compressed: SegmentSerialized): Array[DocPosting] = {
-        val components = DocPostingsSerializer.decodeComponents(compressed)
+        val components = DocPostingsSerializer.decodeComponents(compressed,
+            measureSerializer.compressFlags)
         if (components.length != 3 ||
             components(1).length != components(2).length ||
             components(0).length < components(1).length)

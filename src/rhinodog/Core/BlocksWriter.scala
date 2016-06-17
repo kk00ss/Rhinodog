@@ -29,89 +29,87 @@ class BlocksWriter
     val docPostingsSerializer = new DocPostingsSerializer(measureSerializer)
     val segmentSize = DocPostingsSerializer.segmentSize
 
-    var currentPostingPosition = 0
-    var segmentBuffer = new Array[DocPosting](segmentSize)
+    var segmentBuffer = new mutable.ArrayBuffer[DocPosting](segmentSize)
     var prevDocID = 0l
 
     var currentBlockEstimatedSize = 0
     var currentBlocksSegments = List[Segment]()
 
-    var blocks = new mutable.ArrayBuffer[BlockInfoRAM]()
+    var blocks = new TreeMap[Long, BlockInfoRAM]()
 
     def add(docPosting: DocPosting): Unit = {
         if (docPosting.docID <= prevDocID)
             throw new IllegalStateException("new docPosting should have larger docID than the last one")
         prevDocID = docPosting.docID
-        if (currentPostingPosition == segmentSize)
+        if (segmentBuffer.length == segmentSize)
             flushSegment()
-        segmentBuffer(currentPostingPosition) = docPosting
-        currentPostingPosition += 1
-
+        segmentBuffer += docPosting
     }
 
-    def bulkAdd(data: Seq[DocPosting]) = {
+    def bulkAdd(data: mutable.ArrayBuffer[DocPosting]) = {
         flushSegment()
-        var sortedData = data.sortBy(_.docID).toArray
-        currentPostingPosition = segmentSize
-        while (sortedData.nonEmpty) {
-            segmentBuffer = sortedData.take(segmentSize)
-            sortedData = sortedData.drop(segmentSize)
+        val sortedData = data.sortBy(_.docID)
+        var i = 0
+        val nSlices = sortedData.length / segmentSize
+        while (i < nSlices + 1) {
+            segmentBuffer = sortedData.slice(segmentSize*i,segmentSize)
+            i += 1
             flushSegment()
         }
-        currentPostingPosition = 0
     }
 
-    def flushSegment() = if(currentPostingPosition > 0) {
+    def flushSegment() = if (segmentBuffer.nonEmpty) {
         val serializedSegment: Segment = serializeSegment()
-        var newSegmentSerializedSize = measureSerializer.numberOfBytesRequired + 8 + 2 +
-            DocPostingsSerializer.sizeInBytes(serializedSegment.data)
+        var newSegmentSerializedSize = 4 + 8 + 2 + DocPostingsSerializer.sizeInBytes(serializedSegment.data)
+        //measureSerializer.numberOfBytesRequired
         if (newSegmentSerializedSize + currentBlockEstimatedSize > blockTargetSize)
             flushBlock()
         currentBlockEstimatedSize += newSegmentSerializedSize
         currentBlocksSegments :+= serializedSegment
-        segmentBuffer = new Array[DocPosting](segmentSize)
-        currentPostingPosition = 0
+        segmentBuffer.clear()
     }
 
     def serializeSegment(): Segment = {
-        val data = docPostingsSerializer.encodeIntoComponents(segmentBuffer.take(currentPostingPosition))
+        val data = docPostingsSerializer.encodeIntoComponents(segmentBuffer)
         var maxDocID = 0l
         var maxMeasure = measureSerializer.MinValue
-        for (i <- 0 until currentPostingPosition) {
-            val el = segmentBuffer(i)
+        for (el <- segmentBuffer) {
             if (el.docID > maxDocID) maxDocID = el.docID
             if (el.measure.score > maxMeasure.score) maxMeasure = el.measure
         }
-        Segment(maxDocID, maxMeasure, data)
+        Segment(maxDocID, maxMeasure, segmentBuffer.length, data)
     }
 
-    def flushBlock() = if(currentBlocksSegments.nonEmpty) {
+    def flushBlock() = if (currentBlocksSegments.nonEmpty) {
         var maxDocID = 0l
         var maxMeasureValue = measureSerializer.MinValue
         val buffer = ByteBuffer.allocate(currentBlockEstimatedSize)
+        var totalDocsInBlock = 0
         currentBlocksSegments.foreach(segment => {
+            totalDocsInBlock += segment.totalDocs
             if (segment.maxDocID > maxDocID) maxDocID = segment.maxDocID
             if (segment.maxMeasure.score > maxMeasureValue.score)
                 maxMeasureValue = segment.maxMeasure
             buffer.putLong(segment.maxDocID)
-            measureSerializer.serialize(segment.maxMeasure, buffer)
+            //measureSerializer.serialize(segment.maxMeasure, buffer)
+            buffer.putFloat(segment.maxMeasure.score)
             val segmentLength = DocPostingsSerializer.sizeInBytes(segment.data).asInstanceOf[Short]
             buffer.putShort(segmentLength)
             DocPostingsSerializer.writeComponents(segment.data, buffer)
         })
         val meta = BlockMetadata(maxMeasureValue,
-                                 currentBlockEstimatedSize,
-                                 segmentSize * currentBlocksSegments.length)
-        blocks :+= BlockInfoRAM(BlockKey(termID,maxDocID), meta, buffer.array())
+            currentBlockEstimatedSize,
+            totalDocsInBlock)
+        blocks += ((maxDocID, BlockInfoRAM(BlockKey(termID, maxDocID), meta, buffer.array())))
         currentBlockEstimatedSize = 0
         currentBlocksSegments = List()
     }
 
-    def flushBlocks(): mutable.ArrayBuffer[BlockInfoRAM] = {
+    def flushBlocks(): TreeMap[Long, BlockInfoRAM] = {
         flushSegment()
         flushBlock()
         val oldBlocks = blocks
-        blocks = new mutable.ArrayBuffer[BlockInfoRAM]()
+        blocks = new TreeMap[Long, BlockInfoRAM]()
         return oldBlocks
     }
 }

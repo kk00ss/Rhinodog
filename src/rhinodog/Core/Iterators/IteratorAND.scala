@@ -13,14 +13,14 @@
 // limitations under the License.
 package rhinodog.Core.Iterators
 
-import rhinodog.Core.Definitions.BaseTraits.TermIteratorBase
+import rhinodog.Core.Definitions.BaseTraits.ITermIterator
 
 import scala.collection.mutable.ArrayBuffer
 
-class IteratorAND(components: Seq[TermIteratorBase],
+class IteratorAND(components: Seq[ITermIterator],
                   estimateUnit: Float = 0f,
                   combineEstimates: (Float, Float) => Float
-                  = (a, b) => a + b) extends TermIteratorBase {
+                  = (a, b) => a + b) extends ITermIterator {
 
     def currentDocID: Long = _currentDocID
 
@@ -32,11 +32,13 @@ class IteratorAND(components: Seq[TermIteratorBase],
     }
 
     var positionChanged = true
-    var _currentDocID: Long = -1
-    var _currentScore: Float = -1
+    var _currentDocID: Long = -2
+    var _currentScore: Float = -2
 
     def computeScore() = {
-        _currentScore = components.map(_.currentScore).fold(estimateUnit)(combineEstimates)
+        _currentScore = estimateUnit
+        for(c <- components)
+            _currentScore = combineEstimates(_currentScore, c.currentScore)
         positionChanged = false
     }
 
@@ -47,7 +49,11 @@ class IteratorAND(components: Seq[TermIteratorBase],
     def hasNextSegment: Boolean = components.minBy(_.segmentMaxDocID).hasNextSegment
 
     //true means there are probably some values left, false means there is nothing left for sure
-    def hasNext: Boolean = components.forall(_.currentDocID != -1)
+    def hasNext: Boolean = if(_currentDocID != -1) {
+        val ret = components.forall(_.currentDocID != -1)
+        if(!ret) _currentDocID = -1
+        ret
+    } else false
 
     def areComponentsPositionsEqual: Boolean = {
         val firstPosition = components.head.currentDocID
@@ -75,11 +81,8 @@ class IteratorAND(components: Seq[TermIteratorBase],
                 equalityFlag = areComponentsPositionsEqual
             }
             _currentDocID = if (equalityFlag) lastPosition else -1
-            return _currentDocID
-        } else {
-            _currentDocID = -1
-            return _currentDocID
         }
+        return _currentDocID
     }
 
     def next(): Long = {
@@ -88,20 +91,28 @@ class IteratorAND(components: Seq[TermIteratorBase],
             val componentWithSmallestPosition = components.minBy(_.currentDocID)
             componentWithSmallestPosition.next()
             levelIterators()
-        } else _currentDocID = -1
+        }
         return _currentDocID
     }
 
     def blockMaxDocID: Long = components.minBy(_.blockMaxDocID).blockMaxDocID
 
-    def blockMaxScore: Float = components.map(_.blockMaxScore).sum
+    def blockMaxScore: Float = {
+        var ret = estimateUnit
+        components.foreach(c => ret = combineEstimates(c.blockMaxScore, ret))
+        ret
+    }
 
     def segmentMaxDocID: Long = components.minBy(_.segmentMaxDocID).blockMaxDocID
 
-    def segmentMaxScore: Float = components.map(_.segmentMaxScore).sum
+    def segmentMaxScore: Float = {
+        var ret = estimateUnit
+        components.foreach(c => ret = combineEstimates(c.segmentMaxScore, ret))
+        ret
+    }
 
     //either readSegmentMeta or nextBlock was called on component iterator with this index
-    var movedComponents = ArrayBuffer[TermIteratorBase]()
+    var movedComponents = ArrayBuffer[ITermIterator]()
 
     def nextBlock() = {
         val componentToMove = components.minBy(_.blockMaxDocID)
@@ -132,16 +143,16 @@ class IteratorAND(components: Seq[TermIteratorBase],
             var blockChanged = false
             while ((targetScore > blockMaxScore) && hasNextBlock) {
                 nextBlock()
-                println("block skip - score - andIterator")
                 blockChanged = true
+                println("block skip")
             }
             if (blockChanged)
                 nextSegmentMeta()
             var segmentChanged = false
             while ((targetScore > segmentMaxScore) && hasNextSegment) {
                 nextSegmentMeta()
-                println("segment skip - score - andIterator")
                 segmentChanged = true
+                println("segment skip")
             }
             if (segmentChanged || blockChanged)
                 initSegmentIterator()
@@ -158,13 +169,16 @@ class IteratorAND(components: Seq[TermIteratorBase],
                         else blockEnd = blockMaxDocID
                     }
                 }
+            } else if(!hasNextBlock && !hasNextSegment) {
+                positionChanged = true
+                _currentDocID = -1
             }
         }
         return currentDocID
     }
 
     def advance(targetDocID: Long): Long = {
-        if (targetDocID > _currentDocID) {
+        if (hasNext && targetDocID > _currentDocID) {
             components.foreach(_.advance(targetDocID))
             //println("advance - docID - andIterator")
             positionChanged = true

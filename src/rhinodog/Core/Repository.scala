@@ -23,18 +23,20 @@ import java.util.function.LongBinaryOperator
 import org.fusesource.lmdbjni._
 
 import rhinodog.Core.Definitions._
-import rhinodog.Core.Definitions.BaseTraits._
+import BaseTraits._
 import Caching._
 import Configuration._
-import Utils._
 
 import scala.collection.JavaConversions.{asScalaIterator, mapAsScalaMap}
 import scala.collection.Seq
 
-class Repository(globalConfig: GlobalConfig)
-    extends RepositoryBase {
+class Repository(storageMode: storageModeEnum.storageMode,
+                 //full names of measure, analyzer
+                 watermark: String)
+    extends IRepository {
 
     private var environment: Env = null
+
     private var postingsDB: Database = null
     private var metadataDB: Database = null
     private var documentsDB: Database = null
@@ -45,9 +47,11 @@ class Repository(globalConfig: GlobalConfig)
     private var term2ID_DB: Database = null
     private var ID2Term_DB: Database = null
 
-    val numberOfDatabases = 8
+    private var indexStatistics_DB: Database = null
 
-    //TODO investigate reusability of WriteCache instances
+    val numberOfDatabases = 9
+
+    //TODO investigate re-usability of WriteCache instances
     var writeCache = new WriteCache()
     var dataBeingFlushed: WriteCache = null
 
@@ -56,39 +60,45 @@ class Repository(globalConfig: GlobalConfig)
     //is initialized in restoreMetadata
     val max_Flushed_DocID = new AtomicLong(0)
 
+    //should be initialized from indexStatistics_DB
+    val nextTermID = new AtomicInteger(0)
+
     def getMaxDocID: Long = max_Flushed_DocID.get()
 
     private val atomicMAX = new LongBinaryOperator {
         override def applyAsLong(oldV: Long, newV: Long): Long = if (newV > oldV) newV else oldV
     }
 
-    init()
-
-    def init(): Unit = {
-        val exclusiveLock = writeCacheSHLock.writeLock()
-        exclusiveLock.lock()
+    writeCacheSHLock.writeLock().lock()
+    try {
         openEnvironment()
-        exclusiveLock.unlock()
+    }
+    finally {
+        writeCacheSHLock.writeLock().unlock()
     }
 
     private def openEnvironment(mapSize: Long = 0): Unit = {
-        val newDir = new File(globalConfig.path + File.separator + "subEnvironment_")
+        val newDir = new File(GlobalConfig.path + File.separator + "InvertedIndex")
         if (!newDir.exists())
-            if (globalConfig.storageMode == storageModeEnum.CREATE)
+            if (this.storageMode == storageModeEnum.CREATE)
                 newDir.mkdir()
             else throw new FileNotFoundException("LMDB database not found")
+        else if(this.storageMode == storageModeEnum.CREATE) {
+            newDir.delete()
+            newDir.mkdir()
+        }
         val oldSize = new File(newDir.getPath + File.separator + "data.mdb").length()
-        val overhead = if (oldSize % globalConfig.mapSizeIncreaseStep == 0) 0 else 1
+        val overhead = if (oldSize % GlobalConfig.mapSizeIncreaseStep == 0) 0 else 1
         val newSize = if (mapSize == 0) {
-            if (oldSize == 0) globalConfig.mapSizeIncreaseStep
-            else globalConfig.mapSizeIncreaseStep * (oldSize / globalConfig.mapSizeIncreaseStep + overhead)
+            if (oldSize == 0) GlobalConfig.mapSizeIncreaseStep
+            else GlobalConfig.mapSizeIncreaseStep * (oldSize / GlobalConfig.mapSizeIncreaseStep + overhead)
         } else mapSize
         this.environment = new Env()
         environment.setMapSize(newSize)
         environment.setMaxDbs(numberOfDatabases)
         //TODO: VERIFY ASSUMPTION - Constants.NORDAHEAD hurts single threaded performance
-        // - improves multithreaded theoretically
-        val flag = if (globalConfig.storageMode == storageModeEnum.WRITEnREAD) Constants.RDONLY else 0
+        //TODO: - improves multithreaded theoretically
+        val flag = if (this.storageMode == storageModeEnum.READ_ONLY) Constants.RDONLY else 0
         environment.open(newDir.getPath, flag)
         this.postingsDB = environment.openDatabase("postings")
         this.metadataDB = environment.openDatabase("metadata")
@@ -98,6 +108,25 @@ class Repository(globalConfig: GlobalConfig)
         this.partialFlushWAL_DB = environment.openDatabase("partialFlushWAL_DB")
         this.term2ID_DB = environment.openDatabase("term2ID_DB")
         this.ID2Term_DB = environment.openDatabase("ID2Term_DB")
+
+        this.indexStatistics_DB = environment.openDatabase("indexStatistics_DB")
+        //reading stats from LMDB
+        var tmpResult = this.indexStatistics_DB.get("totalDocsCount".getBytes)
+        this.totalDocsCount = if(tmpResult == null) 0
+        else ByteBuffer.wrap(tmpResult).getLong
+        tmpResult = this.indexStatistics_DB.get("nextTermID".getBytes)
+        val nextTermIDtmp = if(tmpResult == null) 0 else ByteBuffer.wrap(tmpResult).getInt
+        this.nextTermID.set(nextTermIDtmp)
+        if(this.storageMode == storageModeEnum.CREATE)
+            this.indexStatistics_DB.put("watermark".getBytes,watermark.getBytes())
+        else {
+            val originalWatermark = new String(this.indexStatistics_DB.get("watermark".getBytes))
+            if(originalWatermark != watermark)
+                throw new IllegalArgumentException("Reopening the index is only allowed with same" +
+                    "measure and analyzer as it was created with. " +
+                    s"Original watermark was: $originalWatermark"+
+                    s"New watermark is: $watermark")
+        }
     }
 
     private def closeEnvironment() = {
@@ -109,23 +138,27 @@ class Repository(globalConfig: GlobalConfig)
         this.environment.close()
         this.term2ID_DB.close()
         this.ID2Term_DB.close()
+        this.indexStatistics_DB.close()
     }
 
 
+    private var totalDocsCount = 0l
+    def getTotalDocsCount: Long = totalDocsCount
+
+
     //GlobalLexicon section
-    val nextTermID = new AtomicInteger(0)
     val termIDLock = new ReentrantLock()
 
     def getTermID(term: String): Int = {
-        val key = term.getBytes
         //checking write cache
         val ret1 = writeCache.newTerms.getOrElse(term, -1)
         if(ret1 != -1)
             return ret1
         //checking LMDB
-        var termID = term2ID_DB.get(key)
-        if(termID != null) return ByteBuffer.wrap(termID).getInt
-        else {
+        val key = term.getBytes
+        //println("term - "+term)
+        var termIDArr = term2ID_DB.get(key)
+        if(termIDArr == null) {
             termIDLock.lock()
             //Double checked locking
             try {
@@ -134,17 +167,17 @@ class Repository(globalConfig: GlobalConfig)
                 if(ret1 != -1)
                     return ret1
                 //checking LMDB
-                termID = term2ID_DB.get(term.getBytes)
-                if(termID != null) return ByteBuffer.wrap(termID).getInt
+                termIDArr = term2ID_DB.get(term.getBytes)
+                if(termIDArr != null) return ByteBuffer.wrap(termIDArr).getInt
                 else {
                     val newID = nextTermID.getAndIncrement()
                     writeCache.newTerms.put(term,newID)
                     return newID
                 }
             } finally { termIDLock.unlock() }
-        }
+        } else return ByteBuffer.wrap(termIDArr).getInt
     }
-    //doesn't work with writeCache
+
     def getTerm(id: Int): String  = {
         val key = ByteBuffer.allocate(4).putInt(id).array()
         val ret = ID2Term_DB.get(key)
@@ -241,7 +274,7 @@ class Repository(globalConfig: GlobalConfig)
     //=======================================================================
     class SnapshotReader(readTx: Transaction,
                          _writeCache: WriteCache,
-                         _dataBeingFlushed: WriteCache) extends SnapshotReaderInterface {
+                         _dataBeingFlushed: WriteCache) extends ISnapshotReader {
         // search by exact key only
         def getBlock(blockKey: BlockKey): BlockDataSerialized = {
             //TODO: NO READ CACHE, SegmentsCaceh will contain already decoded segments
@@ -304,7 +337,7 @@ class Repository(globalConfig: GlobalConfig)
         def close() = readTx.close()
     }
 
-    def getSnapshotReader: SnapshotReaderInterface
+    def getSnapshotReader: ISnapshotReader
     = new SnapshotReader(this.environment.createReadTransaction(), writeCache, dataBeingFlushed)
 
     /*override def getBlockBuffer(blockKey: BlockKey): DirectBuffer = {
@@ -394,18 +427,20 @@ class Repository(globalConfig: GlobalConfig)
     //======== FLUSHING WRITE CACHE CONTENTS TO DISK ================================
     //=======================================================================
     override def flush(lastDocIDAssigned: Long,
+                       newTotalDocsCount: Long,
                        storageLock: WriteLock,
                        metadataFlush: MetadataToFlush) = {
         val exclusiveLock = writeCacheSHLock.writeLock()
         exclusiveLock.lock()
         try {
+            this.totalDocsCount = newTotalDocsCount
             if (storageLock != null && storageLock.isHeldByCurrentThread) storageLock.unlock()
             // Rotation
             dataBeingFlushed = writeCache
             val dbf = dataBeingFlushed
             writeCache = new WriteCache()
             exclusiveLock.unlock()
-            flush1(dataBeingFlushed, metadataFlush)
+            flush1(dataBeingFlushed, metadataFlush, this.totalDocsCount, this.nextTermID.get())
             // unreferencing written data, to free it's space earlier
             // if it is still the same object
             dataBeingFlushed.synchronized {
@@ -418,15 +453,15 @@ class Repository(globalConfig: GlobalConfig)
         }
     }
 
+    private val flushInProgressLock = new ReentrantLock()
+
     private def flush1(data: WriteCache,
                        metadataFlush: MetadataToFlush,
+                       newTotalDocsCount: Long,
+                       nextTermID: Int,
                        attempt: Byte = 1): Unit = {
+        flushInProgressLock.lock()
         val tx = this.environment.createWriteTransaction()
-        val postingsDB = this.postingsDB
-        val metaDB = this.metadataDB
-        val docsDB = this.documentsDB
-        val nDeletedDB = this.numberOfDeletedDB
-        val roaringDB = this.roaringBitmapsDB
         var isAborted = false
         val abort = (e: Exception) => {
             isAborted = true
@@ -434,17 +469,22 @@ class Repository(globalConfig: GlobalConfig)
             tx.abort()
         }
         try {
+            var tmpValue = ByteBuffer.allocate(8).putLong(newTotalDocsCount).array()
+            this.indexStatistics_DB.put(tx, "totalDocsCount".getBytes, tmpValue)
+            tmpValue = ByteBuffer.allocate(4).putInt(nextTermID).array()
+            this.indexStatistics_DB.put(tx, "nextTermID".getBytes, tmpValue)
+
             for (blockKey <- data.deletedBlocks.iterator) {
                 val key = blockKey.serialize
-                postingsDB.delete(tx, key)
-                metaDB.delete(tx, key)
-                nDeletedDB.delete(tx, key)
+                this.postingsDB.delete(tx, key)
+                this.metadataDB.delete(tx, key)
+                this.numberOfDeletedDB.delete(tx, key)
             }
             for ((rootKey, metadataSerialized) <- data.addedMeta) {
-                metaDB.put(tx, rootKey.serialize, metadataSerialized)
+                this.metadataDB.put(tx, rootKey.serialize, metadataSerialized)
             }
             for ((key, blockData) <- data.addedBlocks) {
-                postingsDB.put(tx, key.serialize, blockData)
+                this.postingsDB.put(tx, key.serialize, blockData)
             }
             for((term, newID) <- data.newTerms) {
                 val key = term.getBytes
@@ -461,41 +501,44 @@ class Repository(globalConfig: GlobalConfig)
             for (docID <- data.docs.deletedDocuments.iterator()) {
                 val key = ByteBuffer.allocate(8)
                 key.putLong(docID)
-                docsDB.delete(tx, key.array())
+                this.documentsDB.delete(tx, key.array())
             }
             for (doc <- data.docs.addedDocuments) {
                 val key = ByteBuffer.allocate(8)
                 key.putLong(doc._1)
-                docsDB.put(tx, key.array(), doc._2)
+                this.documentsDB.put(tx, key.array(), doc._2)
             }
             for (delInfo <- metadataFlush.deletionInfo) {
                 val key = delInfo._1.serialize
                 val value = ByteBuffer.allocate(4)
                 value.putInt(delInfo._2)
-                nDeletedDB.put(tx, key, value.array())
+                this.numberOfDeletedDB.put(tx, key, value.array())
             }
             for (segment <- metadataFlush.bitSetSegments) {
                 val key = ByteBuffer.allocate(8)
                 key.putLong(segment.key)
-                roaringDB.put(tx, key.array(), segment.data)
+                this.roaringBitmapsDB.put(tx, key.array(), segment.data)
             }
         } catch {
             case e: LMDBException => {
                 try {
                     val timestamp = System.currentTimeMillis()
-                    println("=========== Exception is handled correctly " + timestamp)
                     abort(e)
+                    println("=========== Retrying transaction " + timestamp)
+                    //TODO: make 2 - configurable parameter
                     if (attempt < 2) {
                         isAborted = false
                         //close, increase mapSize, open
-                        val newSize = this.environment.info().getMapSize + globalConfig.mapSizeIncreaseStep
+                        val newSize = this.environment.info().getMapSize + GlobalConfig.mapSizeIncreaseStep
                         closeEnvironment()
                         openEnvironment(newSize)
                         //secondAttempt
                         flush1(data,
                             metadataFlush,
+                            newTotalDocsCount: Long,
+                            nextTermID: Int,
                             (attempt + 1).asInstanceOf[Byte])
-                    } else throw new IllegalArgumentException("mapSizeIncreaseStep is likely too small")
+                    } else throw new IllegalArgumentException("mapSizeIncreaseStep is likely too small", e)
                     println("=========== AFTER " + timestamp)
                 } catch {
                     case ex: Exception => {
@@ -509,6 +552,10 @@ class Repository(globalConfig: GlobalConfig)
             if (!isAborted)
                 tx.commit()
             tx.close()
+            if(attempt > 1)
+                println("Successful retry of write transaction")
+            if(flushInProgressLock.isHeldByCurrentThread)
+                flushInProgressLock.unlock()
         }
     }
 

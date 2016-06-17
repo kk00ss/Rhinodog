@@ -26,9 +26,9 @@ class DocPostingSerializerTest {
         val N = 100
         val data = new Array[DocPosting](N)
         for (i <- 1 to N) {
-            data(i - 1) = new DocPosting(i, new MeasureSimple(i.asInstanceOf[Byte], i))
+            data(i - 1) = new DocPosting(i, new OkapiBM25Measure(i.asInstanceOf[Byte], i))
         }
-        val serializer = new DocPostingsSerializer(new MeasureSerializerSimple())
+        val serializer = new DocPostingsSerializer(new OkapiBM25MeasureSerializer())
         val segmentSerialized = serializer.encodeIntoComponents(data)
         val uncompressed = serializer.decodeFromComponents(segmentSerialized)
         assert(uncompressed.toList == data.toList)
@@ -46,9 +46,9 @@ class DocPostingSerializerTest {
                id += random.nextInt(Short.MaxValue)
             prevId = id
             data(i - 1) = new DocPosting(id,
-                new MeasureSimple(math.pow(id % 3, 2).asInstanceOf[Byte], random.nextInt(Short.MaxValue)))
+                new OkapiBM25Measure(math.pow(id % 3, 2).asInstanceOf[Byte], random.nextInt(Short.MaxValue)))
         }
-        val serializer = new DocPostingsSerializer(new MeasureSerializerSimple())
+        val serializer = new DocPostingsSerializer(new OkapiBM25MeasureSerializer())
         val segmentSerialized = serializer.encodeIntoComponents(data)
         val uncompressed = serializer.decodeFromComponents(segmentSerialized)
         assert(uncompressed.toList == data.toList)

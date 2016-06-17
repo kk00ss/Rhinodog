@@ -20,12 +20,14 @@ import rhinodog.Core.Definitions.{Measure,MeasureSerializerBase}
 case class MeasureFloat(score: Float) extends Measure {
     type Self = MeasureFloat
     def compare(that: MeasureFloat) = this.score.compare(that.score)
-    def numberOfBytesRequired = 5
+    def numberOfBytesRequired = 4
     def getSerializer = new MeasureFloatSerializer()
 }
 
 class MeasureFloatSerializer extends MeasureSerializerBase {
-    def numberOfComponentsRequired = 1
+    val numberOfComponentsRequired = 1
+    val compressFlags = List(false)
+
     //TODO: add parameter to disable compression of components
     //TODO: OR find a way to get exponent and mantisa out of Int representation of Float
     def MinValue: Measure = MeasureFloat(0)
@@ -38,8 +40,6 @@ class MeasureFloatSerializer extends MeasureSerializerBase {
     def numberOfBytesRequired = 4
     def serialize(_m: Measure, buf: ByteBuffer) = buf.putFloat(_m.asInstanceOf[MeasureFloat].score)
     def deserialize(buf: ByteBuffer): Measure = MeasureFloat(buf.getFloat)
-
-    private val cachedBuffer = ByteBuffer.allocate(4)
 
     //component 0 - is used for doc Ids
     def writeToComponents(_m: Measure, components: Array[Array[Int]], i: Int): Unit = {

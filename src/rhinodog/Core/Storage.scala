@@ -33,14 +33,12 @@ import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 
 class Storage
-(val storageConfig: StorageConfig) {
-    import storageConfig._
+(val mainComponents: MainComponents) {
     import mainComponents._
 
     private val termWriters = new ConcurrentHashMap[Int, TermWriter]()
     private val termWriterConfigTemplage = new TermWriterConfig(0, mainComponents,
-                                                                globalConfig.targetBlockSize,
-                                                                globalConfig.maxNodeUnderflow)
+                                                                GlobalConfig.targetBlockSize)
     @volatile
     private var isOpen = true
 
@@ -56,6 +54,9 @@ class Storage
     }
 
     private lazy val docIDCounter = new AtomicLong(repository.getMaxDocID)
+    @volatile
+    private var smallFlush_lastDocID = repository.getMaxDocID
+
     private val modifyOrFlushLock = new ReentrantReadWriteLock()
     private val compactionsOrCloseLock = new ReentrantReadWriteLock()
     private val docSerializer = new DocumentSerializer (measureSerializer)
@@ -69,24 +70,19 @@ class Storage
     }
 
     //========================= Merge Scheduling ===================================================
-    private val scheduledCompactions = new ConcurrentLinkedDeque[CompactionJobInterface]
+    private val scheduledCompactions = new ConcurrentLinkedDeque[ICompactionJob]
     private val compactionsRunning = new AtomicInteger(0)
 
-    def addCompactionJob(job: CompactionJobInterface): Unit
+    def addCompactionJob(job: ICompactionJob): Unit
     = if(isOpen) scheduledCompactions.add(job)
 
     val fsRoot = Paths.get(".").toAbsolutePath.getRoot.toFile
 
     val timer = new Timer()
     timer.schedule(new TimerTask { override def run() = {
-        //update free space ratio
-//        val totalSpace = fsRoot.getTotalSpace
-//        val freeSpace = fsRoot.getFreeSpace
-//        val freeSpaceRatio = (freeSpace + 0f)/totalSpace
-//        storageConfig.updateFreeSpaceRatio(freeSpaceRatio)
-        if(operatingSystemMXBean.getSystemCpuLoad <= globalConfig.merges_CpuLoadThreshold ) {
+        if(operatingSystemMXBean.getSystemCpuLoad <= GlobalConfig.merges_cpuLoadThreshold ) {
             while(isOpen && scheduledCompactions.nonEmpty &&
-                compactionsRunning.get() < globalConfig.maxConcurrentCompactions) {
+                compactionsRunning.get() < GlobalConfig.merges_maxConcurrent) {
                 //starting new compaction
                 Future {
                     compactionsOrCloseLock.readLock().lock()
@@ -107,22 +103,24 @@ class Storage
                 }
             }
         }
-    }}, globalConfig.merges_QueueCheckInterval,
-        globalConfig.merges_QueueCheckInterval)
+    }}, GlobalConfig.merges_queueCheckInterval,
+        GlobalConfig.merges_queueCheckInterval)
 
     private val nSmallFlushesFromLastLarge = new AtomicInteger(0)
 
     timer.schedule(new TimerTask {
         override def run(): Unit = if(isOpen) {
-            smallFlush()
-            val tmp = nSmallFlushesFromLastLarge.incrementAndGet()
-            if(tmp == globalConfig.largeFlushInterval) {
-                largeFlush()
-                nSmallFlushesFromLastLarge.set(0)
+            if(docIDCounter.get() > smallFlush_lastDocID) {
+                smallFlush()
+                val tmp = nSmallFlushesFromLastLarge.incrementAndGet()
+                if (tmp == GlobalConfig.largeFlushInterval) {
+                    largeFlush()
+                    nSmallFlushesFromLastLarge.set(0)
+                }
             }
         }
-    }, globalConfig.smallFlushInterval,
-       globalConfig.smallFlushInterval)
+    }, GlobalConfig.smallFlushInterval,
+        GlobalConfig.smallFlushInterval)
 
 
 
@@ -130,36 +128,29 @@ class Storage
         .asInstanceOf[com.sun.management.OperatingSystemMXBean]
     //==============================================================================================
 
-    def totalDocs: Long = _totalDocs.get()
+    def totalDocsCount: Long = _totalDocs.get()
 
     //TODO: restore after reloading from Repository
-    private val _totalDocs = new AtomicLong(0)
+    private val _totalDocs = new AtomicLong(mainComponents.repository.getTotalDocsCount)
 
-    def addDocument(docInfo: AnalyzedDocument): Long = {
+    def addDocument(document: AnalyzedDocument): Long = {
         val sharedLock = modifyOrFlushLock.readLock()
         sharedLock.lock()
         var currentDocID = -1l
         try {
             currentDocID = docIDCounter.incrementAndGet()
-            val document = AnalyzedDocument(docInfo.text, docInfo.terms)
-            val operations = document.terms.map(td => (new DocPosting(currentDocID, td.measure),
-                                                        getTermWriter(td.termID))).toBuffer
-            var operationTimeout = 1
-            while (operations.nonEmpty) {
-                for (op <- operations) {
-                    val ret = op._2.tryAdd(op._1, operationTimeout)
-                    if (ret)
-                        operations -= op
-                }
-                operationTimeout *= 2
-            }
+            document.terms.foreach(docTerm => {
+                val docPosting = new DocPosting(currentDocID, docTerm.measure)
+                getTermWriter(docTerm.termID).addDocument (docPosting)
+            })
             val docSerialized = docSerializer.serialize(document)
             repository.addDocument(currentDocID, docSerialized)
             _totalDocs.incrementAndGet()
             return currentDocID
-        } finally {
-            sharedLock.unlock()
-        }
+        } catch {
+            case ex: Exception =>
+                ex.printStackTrace()
+        } finally { sharedLock.unlock() }
         return currentDocID
     }
 
@@ -202,7 +193,10 @@ class Storage
         try {
             smallFlush()
             largeFlush()
-        } finally { exclusiveLock.unlock() }
+        } finally {
+            if(exclusiveLock.isHeldByCurrentThread)
+                exclusiveLock.unlock()
+        }
     }
 
     def smallFlush() = {
@@ -212,6 +206,7 @@ class Storage
             exclusiveLock.lock()
         try {
             termWriters.foreach(_._2.smallFlush())
+            smallFlush_lastDocID = docIDCounter.get()
         } finally {
             if(!wasAlreadyLocked && exclusiveLock.isHeldByCurrentThread)
                 exclusiveLock.unlock()
@@ -226,7 +221,10 @@ class Storage
         try {
             termWriters.foreach(_._2.largeFlush())
             val metadataToFlush = metadataManager.flush
-            repository.flush(docIDCounter.get(), exclusiveLock, metadataToFlush)
+            repository.flush(docIDCounter.get(),
+                this.totalDocsCount,
+                exclusiveLock,
+                metadataToFlush)
         } finally {
             if(!wasAlreadyLocked  && exclusiveLock.isHeldByCurrentThread)
                 exclusiveLock.unlock()
