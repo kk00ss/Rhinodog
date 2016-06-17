@@ -42,7 +42,7 @@ Written for fun, work in progress. For understanding why this project was create
 *  Use block's and segment's metadata to avoid decoding blocks and segments that cannot give TOP K matches.
 *  Flexible storage format and pluggable analysis. Current version contains examples of using Lucene's analyzers and Okapi BM25 scoring.
    Analysis and Measure format will be closely coupled in order to avoid explosion of abstractions used to decouple them.
-*  It's relatively easy to implement scoring at indexing time (BM25 without IDF, and with assumption that we know avarage document size in advance)
+*  It's relatively easy to implement scoring at indexing time (BM25 without IDF can be computed and stored at indexing time, with assumption that we know avarage document size in advance)
 
 
 ##List of opensource software used:
