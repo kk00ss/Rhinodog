@@ -3,8 +3,14 @@ Implementation of inverted index on top of LMDB with some interesting optimizati
 Written for fun, work in progress. For understanding why this project was created see Main features section
 
 ##Current state
-* readiness - it's not even close to production level readiness
+* readiness - Limited features, not 100% tests coverage and issue with LMDB, after creating new environment it cannot save new document and fails, but after restart same document is perfectly fine for it. LMDB's write speed is also potential bottleneck for write performance, but I would bet it will show good query performance. 
 * tests - work in progress. Performance tests were only run on generated datasets, not real tests. But in-memory tests show that it is comparable with Lucene, and for some cases even faster. Educated guess would be - because Red-Black-Tree is faster than skip-lists. But it's hard to say for sure.
+
+##Plans
+* Multifield documents support
+* Faceting
+
+
  
 ##Small example
 
