@@ -7,6 +7,7 @@ Written for fun, work in progress. For understanding why this project was create
 * tests - work in progress. Performance tests were only run on generated datasets, not real tests. But in-memory tests show that it is comparable with Lucene, and for some cases even faster. Educated guess would be - because Red-Black-Tree is faster than skip-lists. But it's hard to say for sure.
 
 ##Plans
+* Proper logging
 * Multifield documents support
 * Faceting
 
