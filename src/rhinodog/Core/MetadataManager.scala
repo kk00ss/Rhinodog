@@ -16,6 +16,8 @@ package rhinodog.Core
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicLong
 
+import org.slf4j.LoggerFactory
+
 import scala.collection.Seq
 import scala.collection.JavaConversions.mapAsScalaMap
 
@@ -29,6 +31,8 @@ import java.util.concurrent._
 /*Thread safety of flush is not guarantied*/
 case class MetadataManager(measureSerializer: MeasureSerializerBase)
     extends IMetadataManager {
+    private val logger = LoggerFactory.getLogger(this.getClass)
+
     //========= METADATA STATE =================================================
     //TermID -> TermMetadata
     private val metadataByTerm = new ConcurrentHashMap[Int, TermMetadata]()
@@ -39,13 +43,14 @@ case class MetadataManager(measureSerializer: MeasureSerializerBase)
 
     def compare(other: MetadataManager): Boolean = {
         var bitSetsTest = true
-        for(pair <- bitSetSegments)
-            if(other.bitSetSegments.containsKey(pair._1)) {
+        for (pair <- bitSetSegments)
+            if (other.bitSetSegments.containsKey(pair._1)) {
                 if (other.bitSetSegments(pair._1).bitSet != pair._2.bitSet)
                     bitSetsTest = false
             } else bitSetsTest = false
         return bitSetsTest && other.metadataByTerm == this.metadataByTerm
     }
+
     //========= Utils =================================================================
     val serializer = MetadataSerializer(measureSerializer)
     var mergeDetector: ICompactionManager = null
@@ -53,63 +58,83 @@ case class MetadataManager(measureSerializer: MeasureSerializerBase)
     /* 0 indicates that term metadata is absent */
     override def getNumberOfDocs(termID: Int): Long = {
         val meta = metadataByTerm.get(termID)
-        if(meta != null) return meta.numberOfDocs
-        else return 0
+        val ret = if (meta != null) meta.numberOfDocs
+        else 0
+        logger.trace("getNumberOfDocs termID = {} nDocs = {}", termID, ret)
+        ret
     }
 
+
     private val restoreNodeMetadata =
-            (key: BlockKey, buffer: ByteBuffer) => {
-                var termMetadata = metadataByTerm.get(key.termID)
-                if(termMetadata == null) {
-                    termMetadata = TermMetadata()
-                    metadataByTerm.put(key.termID, termMetadata)
-                }
-                val meta = serializer.deserialize(buffer)
-                val newElement = (key, meta)
-                termMetadata.blocks += newElement
-                //we don't use live docs because numberOfDeleted is not read here
-                termMetadata.numberOfDocs += meta.totalNumber
-                if(mergeDetector != null)
-                    mergeDetector.blockAddedEvent(key.termID, key, meta)
+        (key: BlockKey, buffer: ByteBuffer) => {
+            var termMetadata = metadataByTerm.get(key.termID)
+            if (termMetadata == null) {
+                termMetadata = TermMetadata()
+                metadataByTerm.put(key.termID, termMetadata)
+            }
+            val meta = serializer.deserialize(buffer)
+            val newElement = (key, meta)
+            termMetadata.blocks += newElement
+            //we don't use live docs because numberOfDeleted is not read here
+            termMetadata.numberOfDocs += meta.totalNumber
+            logger.trace("restoreNodeMetadata termID = {} early estimate on nDocs = {}",
+                key.termID, termMetadata.numberOfDocs)
+            if (mergeDetector != null)
+                mergeDetector.blockAddedEvent(key.termID, key, meta)
         }
     private val restoreNumDeleted = (key: BlockKey, numDeleted: Int) => {
         val termMetadata = metadataByTerm.get(key.termID)
-        if(termMetadata != null) {
-            val blockMetadata = termMetadata.blocks.get(key)
-            if (blockMetadata.isDefined) {
-                blockMetadata.get.numberOfDeleted = numDeleted
-                termMetadata.numberOfDocs -= numDeleted
+        if (termMetadata != null) {
+            val tmp = termMetadata.blocks.get(key)
+            if(tmp.isEmpty) {
+                val ex = new IllegalStateException("no term metadata for blockKey")
+                logger.error("restoreNumDeleted",ex)
+                throw ex
             }
+            val blockMetadata = tmp.get
+            blockMetadata.numberOfDeleted = numDeleted
+            termMetadata.numberOfDocs -= numDeleted
+            logger.trace("restoreNodeMetadata termID = {} early estimate on nDocs = {}",
+                key.termID, termMetadata.numberOfDocs)
         }
     }
 
     private val restoreBitSet: (BitSetSegmentSerialized) => Unit =
-        (bitset) => bitSetSegments.put(bitset.key, BitSetSegment.deserialize(bitset.data))
+        (bitset) => {
+            logger.trace("restoreBitSet key = {}", bitset.key)
+            bitSetSegments.put(bitset.key, BitSetSegment.deserialize(bitset.data))
+        }
 
 
-    val restoreMetadataHook = RestoreMetadataHook(restoreNodeMetadata,restoreNumDeleted,restoreBitSet)
+    val restoreMetadataHook = RestoreMetadataHook(restoreNodeMetadata, restoreNumDeleted, restoreBitSet)
 
     //========== METADATA MANAGEMENT ===================================================
     /* returns key: Long, docIDinRange: Int */
     private def bitSetSegmentKey(docID: Long): (Long, Int) = {
         val key = docID / GlobalConfig.bitSetSegmentRange
         val docIDinRange = (docID % GlobalConfig.bitSetSegmentRange).asInstanceOf[Int]
+        logger.trace("bitSetSegmentKey docID = {}, key = {}, docIDinRange = {}",
+            Array(docID,key,docIDinRange))
         return (key, docIDinRange)
     }
 
     override def isDeleted(docID: Long): Boolean = {
-        if(bitSetSegments.isEmpty)
-            return false
-        val (key, docIDinRange) = bitSetSegmentKey(docID)
-        val bitSetSegment = bitSetSegments.get(key)
-        if(bitSetSegment == null)
-            return false
-        return bitSetSegment.check(docIDinRange)
+        var ret = false
+        if (bitSetSegments.nonEmpty) {
+            val (key, docIDinRange) = bitSetSegmentKey(docID)
+            val bitSetSegment = bitSetSegments.get(key)
+            if (bitSetSegment != null)
+                ret =  bitSetSegment.check(docIDinRange)
+        }
+        logger.trace("isDeleted docID = {}, isDeleted = {}",docID,ret)
+        return ret
     }
+
     override def markDeleted(docID: Long): Unit = {
+        logger.trace("isDeleted docID = {}", docID)
         val (key, docIDinRange) = bitSetSegmentKey(docID)
         var segment = bitSetSegments.get(key)
-        if(segment == null) bitSetSegments.putIfAbsent(key, BitSetSegment())
+        if (segment == null) bitSetSegments.putIfAbsent(key, BitSetSegment())
         segment = bitSetSegments.get(key)
         segment.synchronized {
             segment.add(docIDinRange)
@@ -118,23 +143,25 @@ case class MetadataManager(measureSerializer: MeasureSerializerBase)
     }
 
     /*Thread safety is controlled in Storage, should be executed with TermWriterLock*/
-    override def deleteFromTerm(termID: Int, measure: Measure, docID: Long): Boolean = {
+    override def deleteFromTerm(termID: Int, docID: Long): Boolean = {
+        logger.trace("deleteFromTerm termID = {}, docID = {}", termID, docID)
         val termMetadata = metadataByTerm.get(termID)
-        if(termMetadata == null) return false
+        if (termMetadata == null) return false
         val key = BlockKey(termID, docID, 0)
         val blockMetadata = termMetadata.blocks.from(key).headOption
-        if(blockMetadata.isEmpty) return false
+        if (blockMetadata.isEmpty) return false
         val actualBlockMD = blockMetadata.get
         termMetadata.numberOfDocs -= 1
-        actualBlockMD._2.numberOfDeleted +=1
+        actualBlockMD._2.numberOfDeleted += 1
         val blockKey = actualBlockMD._1
-        changedDeletionInfo.put(blockKey,  actualBlockMD._2.numberOfDeleted)
-        if(mergeDetector != null)
+        changedDeletionInfo.put(blockKey, actualBlockMD._2.numberOfDeleted)
+        if (mergeDetector != null)
             mergeDetector.docDeletedEvent(blockKey, actualBlockMD._2)
         return true
     }
 
     override def getTermMetadata(termID: Int): Option[TermMetadata] = {
+        logger.debug("getTermMetadata termID = {}", termID)
         val termData = metadataByTerm.get(termID)
         if (termData != null) return Some(termData)
         else None
@@ -143,14 +170,16 @@ case class MetadataManager(measureSerializer: MeasureSerializerBase)
     /*Thread safety is controlled in Storage, should be executed with TermWriterLock*/
     override def addMetadata(key: BlockKey,
                              meta: BlockMetadata): TermMetadata = {
+        logger.debug("-> addMetadata key = {}",key)
+        logger.trace("addMetadata meta = {}",meta)
         var termMetadata = metadataByTerm.get(key.termID)
-        if(termMetadata == null) {
+        if (termMetadata == null) {
             termMetadata = TermMetadata()
             metadataByTerm.put(key.termID, termMetadata)
         }
         termMetadata.blocks += ((key, meta))
         termMetadata.numberOfDocs += meta.totalNumber
-        if(mergeDetector != null)
+        if (mergeDetector != null)
             mergeDetector.blockAddedEvent(key.termID, key, meta)
         return termMetadata
     }
@@ -160,10 +189,12 @@ case class MetadataManager(measureSerializer: MeasureSerializerBase)
     override def replaceMetadata(termID: Int,
                                  deleted: Seq[BlockKey],
                                  added: Seq[(BlockKey, BlockMetadata)]) = {
+        logger.debug("-> replaceMetadata termID = {}, deleted = {}",termID, deleted)
+        logger.trace("replaceMetadata added = {}",added)
         val newTermMetadata = metadataByTerm.get(termID).copy()
-        for(key <- deleted) if(newTermMetadata.blocks.contains(key))
+        for (key <- deleted) if (newTermMetadata.blocks.contains(key))
             newTermMetadata.blocks -= key
-        for(newMeta <- added)
+        for (newMeta <- added)
             newTermMetadata.blocks += newMeta
         metadataByTerm.put(termID, newTermMetadata)
     }
@@ -174,6 +205,8 @@ case class MetadataManager(measureSerializer: MeasureSerializerBase)
             BitSetSegmentSerialized(segment._1, segment._2.serialize())
         }).toArray
         ret = MetadataToFlush(segments, changedDeletionInfo)
+        if(logger.isTraceEnabled)
+            logger.trace("flush MetadataToFlush changedDeletionInfo = {}", changedDeletionInfo.toList)
         changedSegments = new ConcurrentHashMap()
         changedDeletionInfo = new ConcurrentHashMap()
         return ret

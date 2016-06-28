@@ -19,18 +19,25 @@ import java.util.concurrent.locks.ReentrantLock
 import Definitions._
 import Configuration._
 import Iterators._
+import org.slf4j.LoggerFactory
 import rhinodog.Core.Utils._
 
 import scala.collection._
 
+object TermWriter {
+    private val logger = LoggerFactory.getLogger(this.getClass)
+}
+
 class TermWriter
 (config: TermWriterConfig) {
+
     import config._
+
     val serializer = MetadataSerializer(mainComponents.measureSerializer)
 
     val blocksManager = new BlocksWriter(mainComponents.measureSerializer,
-                                             config.termID,
-                                             config.targetSize)
+        config.termID,
+        config.targetSize)
 
     //for small flush interval during which analysis threads may add documents out of order
     //TODO: compare with thread-safe data structure
@@ -42,58 +49,85 @@ class TermWriter
     //for new trees and for compactions, that is why we need withLock functions
     private val addOrFlushLock = new ReentrantLock()
 
-    def getIterator = { new RowSegmentIterator(writeCache.toSeq) }
+    private val _smallFlushTimer = mainComponents.metrics.timer("TermWriter SmallFlush")
+    private val _largeFlushTimer = mainComponents.metrics.timer("TermWriter LargeFlush")
+
+    def getIterator = {
+        TermWriter.logger.trace("-> getIterator ->")
+        new RowSegmentIterator(writeCache.toSeq)
+    }
 
     def withLock(func: Function0[Unit]) = {
+        TermWriter.logger.trace("-> withLock")
         addOrFlushLock.lock()
         try {
             func()
-        } finally { addOrFlushLock.unlock() }
+        } finally {
+            addOrFlushLock.unlock()
+            TermWriter.logger.trace("withLock ->")
+        }
     }
 
     def tryWithLock(func: Function0[Unit], timeout: Long = 0): Boolean = {
+        TermWriter.logger.trace("-> withLock")
         val attemptResult = addOrFlushLock.tryLock(timeout, TimeUnit.MILLISECONDS)
-        if(!attemptResult) return false
+        if (!attemptResult) return false
         else {
             try {
                 func()
-            } finally { addOrFlushLock.unlock() }
+            } finally {
+                addOrFlushLock.unlock()
+                TermWriter.logger.trace("withLock ->")
+            }
         }
         return true
     }
 
     /** use increasing timeouts for last terms of the document to finnish it's */
     def addDocument(doc: DocPosting): Boolean = {
+        TermWriter.logger.trace("-> addDocuemnt -- termID = {} docPosting = {}",
+                                config.termID, doc)
         addOrFlushLock.lock()
         try {
             //Analysis threads could finnish processing in different order than they started
-            if(doc.docID < minDocID) minDocID = doc.docID
-            if(doc.docID > maxDocID) maxDocID = doc.docID
+            if (doc.docID < minDocID) minDocID = doc.docID
+            if (doc.docID > maxDocID) maxDocID = doc.docID
             writeCache += doc
             return true
-        } finally { addOrFlushLock.unlock() }
+        } finally {
+            addOrFlushLock.unlock()
+            TermWriter.logger.trace("addDocument ->")
+        }
     }
 
     def smallFlush() = {
         addOrFlushLock.lock()
         try {
             if (writeCache.nonEmpty) {
+                val context = _smallFlushTimer.time()
                 writeCache.foreach(blocksManager.add)
                 writeCache = SortedSet[DocPosting]()
+                context.stop()
             }
-        } finally { addOrFlushLock.unlock()}
+        } finally {
+            addOrFlushLock.unlock()
+        }
     }
 
     def largeFlush() = {
         addOrFlushLock.lock()
         try {
+            val context = _smallFlushTimer.time()
             val blocks = blocksManager.flushBlocks().values
-            for(block <- blocks) {
+            for (block <- blocks) {
                 val key = block.key
                 val metaSerialized = serializer.serialize(block.meta)
                 mainComponents.repository.saveBlock(key, block.data, metaSerialized)
                 mainComponents.metadataManager.addMetadata(key, block.meta)
             }
-        } finally { addOrFlushLock.unlock() }
+            context.stop()
+        } finally {
+            addOrFlushLock.unlock()
+        }
     }
 }

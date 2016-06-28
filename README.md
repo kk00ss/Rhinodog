@@ -7,7 +7,6 @@ Written for fun, work in progress. For understanding why this project was create
 * tests - work in progress. Performance tests were only run on generated datasets, not real tests. But in-memory tests show that it is comparable with Lucene, and for some cases even faster. Educated guess would be - because Red-Black-Tree is faster than skip-lists. But it's hard to say for sure.
 
 ##Plans
-* Proper logging
 * Multifield documents support
 * Faceting
 
@@ -25,7 +24,7 @@ Written for fun, work in progress. For understanding why this project was create
         // 1 - is a termID, automatic conversion of word -> stem -> termID, will be added soon
         val topLevelIterator = invertedIndex
             .getQueryEngine()
-            .buildTopLevelIterator(ElementaryClause(1))
+            .buildTopLevelIterator(ElementaryClause("mississippi")) //English analyzer lowercases every word
 
         val ret = invertedIndex.getQueryEngine().executeQuery(topLevelIterator, 10)
 ```
@@ -52,6 +51,10 @@ Written for fun, work in progress. For understanding why this project was create
 *   [Roaring bitmaps](https://github.com/RoaringBitmap/RoaringBitmap)
 *   [JavaFastPFor](https://github.com/lemire/JavaFastPFOR)
 *   [Netflix archaius](https://github.com/Netflix/archaius)
+*   [Metrics from Dropwizard](http://metrics.dropwizard.io/)
+*   [SLF4J](http://www.slf4j.org/)
+*   [Logback](http://logback.qos.ch/)	
+*   [Netflix archaius](https://github.com/Netflix/archaius)
 *   [Junit](https://github.com/junit-team)
-*   [Lucene 6.0.0](https://github.com/apache/lucene-solr)
+*   [Lucene 6.0.0 analyzers and for comparison](https://github.com/apache/lucene-solr)
 

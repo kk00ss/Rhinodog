@@ -16,7 +16,7 @@ package rhinodog.Run
 import rhinodog.Analysis.EnglishAnalyzer
 import rhinodog.Core.Definitions.Configuration.storageModeEnum
 import rhinodog.Core.Definitions.Document
-import rhinodog.Core.{ElementaryClause, InvertedIndex}
+import rhinodog.Core.{TermToken, InvertedIndex}
 import rhinodog.Core.MeasureFormats.{OkapiBM25MeasureSerializer, OkapiBM25Measure}
 
 import scala.collection._
@@ -24,10 +24,10 @@ import scala.collection._
 object main {
 
     def main(args: Array[String]): Unit = {
-        scala.io.StdIn.readLine()
+        //scala.io.StdIn.readLine()
         val invertedIndex = new InvertedIndex(new OkapiBM25MeasureSerializer(),
                                               new EnglishAnalyzer(),
-                                              storageModeEnum.CREATE)
+                                              storageModeEnum.READ_WRITE)
         val document = scala.io.Source.fromFile("testArticle.txt").mkString
         var start = System.currentTimeMillis()
         val ID = invertedIndex.addDocument(Document(document))
@@ -40,10 +40,10 @@ object main {
 
         val topLevelIterator = invertedIndex
             .getQueryEngine()
-            .buildTopLevelIterator(ElementaryClause(1))
+            .buildTopLevelIterator(TermToken("ada"))
 
         val ret = invertedIndex.getQueryEngine().executeQuery(topLevelIterator, 10)
-
+        invertedIndex.close()
         println()
     }
 }

@@ -13,12 +13,14 @@
 // limitations under the License.
 package rhinodog.Core.Iterators
 
+import org.slf4j.LoggerFactory
 import rhinodog.Core.Definitions._
 
 import scala.collection._
 
 class RowSegmentIterator
 (data: Seq[DocPosting]) {
+
     private var position = 0
     private var changed = true
     private var score = 0f

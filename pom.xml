@@ -3,69 +3,93 @@
          xmlns="http://maven.apache.org/POM/4.0.0"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-
     <groupId>kos</groupId>
     <artifactId>InvertedIndex</artifactId>
     <version>0.1-SNAPSHOT</version>
+    <properties>
+        <slf4j.version>1.7.21</slf4j.version>
+        <logback.version>1.1.7</logback.version>
+        <lucene.version>6.0.0</lucene.version>
+    </properties>
     <dependencies>
         <dependency>
             <groupId>me.lemire.integercompression</groupId>
             <artifactId>JavaFastPFOR</artifactId>
+            <version>0.1.5</version>
         </dependency>
         <dependency>
             <groupId>org.roaringbitmap</groupId>
             <artifactId>RoaringBitmap</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>junit</groupId>
-            <artifactId>junit</artifactId>
+            <version>0.6.1</version>
         </dependency>
         <dependency>
             <groupId>org.deephacks.lmdbjni</groupId>
             <artifactId>lmdbjni-win64</artifactId>
+            <version>0.4.6</version>
         </dependency>
         <dependency>
-            <groupId>org.apache.lucene</groupId>
-            <artifactId>lucene-core</artifactId>
-            <version>6.0.0</version>
+            <groupId>com.netflix.archaius</groupId>
+            <artifactId>archaius-core</artifactId>
+            <version>0.6.0</version>
+        </dependency>
+        <dependency>
+            <groupId>com.codahale.metrics</groupId>
+            <artifactId>metrics-core</artifactId>
+            <version>3.0.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>${slf4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>${logback.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-core</artifactId>
+            <version>${logback.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.inject</groupId>
+            <artifactId>guice</artifactId>
+            <version>3.0</version>
+        </dependency>
+        <dependency>
+            <groupId>net.codingwell</groupId>
+            <artifactId>scala-guice_2.10</artifactId>
+            <version>4.0.1</version>
+        </dependency>
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>4.11</version>
         </dependency>
         <dependency>
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-analyzers-common</artifactId>
-            <version>6.0.0</version>
+            <version>${lucene.version}</version>
+        </dependency>
+        <!--Benchmarks related-->
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-core</artifactId>
+            <version>${lucene.version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-queries</artifactId>
-            <version>6.0.0</version>
+            <version>${lucene.version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-queryparser</artifactId>
-            <version>6.0.0</version>
-        </dependency>
-        <dependency>
-            <groupId>edu.emory.mathcs.nlp</groupId>
-            <artifactId>nlp4j-core</artifactId>
-            <version>RELEASE</version>
-        </dependency>
-        <dependency>
-            <groupId>edu.emory.mathcs.nlp</groupId>
-            <artifactId>nlp4j-tokenization</artifactId>
-            <version>RELEASE</version>
-        </dependency>
-        <dependency>
-            <groupId>edu.emory.mathcs.nlp</groupId>
-            <artifactId>nlp4j-morphology</artifactId>
-            <version>RELEASE</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.commons</groupId>
-            <artifactId>commons-collections4</artifactId>
-            <version>4.0</version>
+            <version>${lucene.version}</version>
         </dependency>
     </dependencies>
-    <build>
+    <!--<build>
         <sourceDirectory>src</sourceDirectory>
         <plugins>
             <plugin>
@@ -76,30 +100,29 @@
                     <target>1.8</target>
                 </configuration>
             </plugin>
+            <plugin>
+                <groupId>org.scalastyle</groupId>
+                <artifactId>scalastyle-maven-plugin</artifactId>
+                <version>0.8.0</version>
+                <configuration>
+                    <verbose>false</verbose>
+                    <failOnViolation>true</failOnViolation>
+                    <includeTestSourceDirectory>true</includeTestSourceDirectory>
+                    <failOnWarning>false</failOnWarning>
+                    <sourceDirectory>${basedir}/src/rhinodog</sourceDirectory>
+                    <testSourceDirectory>${basedir}/src/test</testSourceDirectory>
+                    <configLocation>${basedir}/scalastyle_config.xml</configLocation>
+                    <outputFile>${project.basedir}/scalastyle-output.xml</outputFile>
+                    <outputEncoding>UTF-8</outputEncoding>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
-    </build>
-    <dependencyManagement>
-    	<dependencies>
-    		<dependency>
-    			<groupId>me.lemire.integercompression</groupId>
-    			<artifactId>JavaFastPFOR</artifactId>
-    			<version>0.1.5</version>
-    		</dependency>
-    		<dependency>
-    			<groupId>org.roaringbitmap</groupId>
-    			<artifactId>RoaringBitmap</artifactId>
-    			<version>0.6.1</version>
-    		</dependency>
-    		<dependency>
-    			<groupId>junit</groupId>
-    			<artifactId>junit</artifactId>
-    			<version>4.11</version>
-    		</dependency>
-    		<dependency>
-    			<groupId>org.deephacks.lmdbjni</groupId>
-    			<artifactId>lmdbjni-win64</artifactId>
-    			<version>0.4.6</version>
-    		</dependency>
-    	</dependencies>
-    </dependencyManagement>
+    </build>-->
 </project>

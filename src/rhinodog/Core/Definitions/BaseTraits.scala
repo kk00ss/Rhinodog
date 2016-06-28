@@ -55,6 +55,8 @@ object BaseTraits {
         def next(): Long
         def advanceToScore(targetScore: Float): Long
         def advance(targetDocID: Long): Long
+
+        def close()
     }
 
     trait ICompactionJob {
@@ -87,7 +89,7 @@ object BaseTraits {
         def isDeleted(docID: Long): Boolean
         def markDeleted(docID: Long): Unit
         //should only be run with TermWriter.addOrFlushLock
-        def deleteFromTerm(termID: Int, measure: Measure, docID: Long): Boolean
+        def deleteFromTerm(termID: Int, docID: Long): Boolean
         def getTermMetadata(termID: Int): Option[TermMetadata]
         //should only be run global lock in storage
         def flush: MetadataToFlush

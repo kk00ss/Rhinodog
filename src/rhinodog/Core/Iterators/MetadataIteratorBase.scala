@@ -24,6 +24,7 @@ trait MetadataIteratorBase {
     def hasNext: Boolean
     def next(): Long
     def advance(docID: Long): Long
+    def close()
 }
 
 class MetaIteratorRAM
@@ -46,6 +47,7 @@ class MetaIteratorRAM
         else currentElement = (-1, null)
         return currentElement._1
     }
+    def close() = {}
 }
 
 class MetaIterator
@@ -70,4 +72,5 @@ class MetaIterator
         else currentElement = (-1, null)
         return currentElement._1
     }
+    def close() = { snapshot.close() }
 }

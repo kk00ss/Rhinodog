@@ -118,4 +118,6 @@ class LayeredIterator(layers: Seq[ITermIterator]) extends ITermIterator {
         }
         _currentDocID
     }
+
+    def close() = layers.foreach(_.close())
 }

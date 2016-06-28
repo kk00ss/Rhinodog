@@ -186,4 +186,6 @@ class IteratorAND(components: Seq[ITermIterator],
         }
         _currentDocID
     }
+
+    def close() = components.foreach(_.close())
 }

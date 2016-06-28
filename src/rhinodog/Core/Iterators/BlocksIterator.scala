@@ -15,6 +15,7 @@ package rhinodog.Core.Iterators
 
 import java.nio.ByteBuffer
 
+import org.slf4j.LoggerFactory
 import rhinodog.Core.Definitions._
 import BaseTraits.ITermIterator
 import rhinodog.Core.Utils.DocPostingsSerializer
@@ -27,17 +28,23 @@ class BlocksIterator
  termFrequency: Long,
  totalDocs: Long,
  useIDF: Boolean = false) extends ITermIterator {
-    if(termFrequency == 0)
-        throw new IllegalArgumentException("termFrequency cannot be 0, " +
+    private val logger = LoggerFactory.getLogger(this.getClass)
+
+    if(termFrequency == 0) {
+        val ex =  new IllegalArgumentException("termFrequency cannot be 0, " +
             "term should be excluded from query")
+        logger.error("BlocksIterator constructor", ex)
+        throw ex
+    }
 
     lazy val IDF: Float = if(useIDF) computeIDF else 1f
 
     private def computeIDF: Float = {
-        val tmp = math.log((totalDocs - termFrequency + 0.5) / (termFrequency + 0.5))
+        var tmp = math.log((totalDocs - termFrequency + 0.5) / (termFrequency + 0.5))
                 .asInstanceOf[Float]
-        if(tmp < 0) return 0
-        else tmp
+        if(tmp < 0) tmp = 0
+        logger.trace("computeIDF termFrequency = {}, IDF = {}", termFrequency, tmp)
+        return tmp
     }
 
     private var block:  (Long, BlockInfoBase) = metaIterator.currentElement
@@ -164,9 +171,12 @@ class BlocksIterator
     }
 
     def advance(targetDocID: Long): Long = {
-        if(targetDocID < currentDocID)
-            throw new IllegalStateException(s"wrong use of advance method," +
-                s" targetDocID = $targetDocID currentDocID = $currentDocID")
+        if(targetDocID < currentDocID) {
+            val ex = new IllegalStateException(s"wrong use of advance method," +
+                " targetDocID < currentDocID")
+            logger.error("advance",ex)
+            throw ex
+        }
         var blockChanged = false
         while (targetDocID > _blockMaxDocID &&  metaIterator.hasNext) {
             metaIterator.advance(targetDocID)
@@ -187,4 +197,6 @@ class BlocksIterator
             initSegmentIterator()
         segmentIterator.advance(targetDocID)
     }
+
+    def close() = metaIterator.close()
 }

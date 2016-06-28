@@ -13,6 +13,7 @@
 // limitations under the License.
 package rhinodog.Core.Definitions
 
+import com.codahale.metrics.MetricRegistry
 import com.netflix.config.DynamicPropertyFactory
 import rhinodog.Core.Definitions.BaseTraits._
 
@@ -33,7 +34,8 @@ object Configuration {
     case class MainComponents
     (measureSerializer: MeasureSerializerBase,
      repository: IRepository,
-     metadataManager: IMetadataManager)
+     metadataManager: IMetadataManager,
+     metrics: MetricRegistry)
 
     case class TermWriterConfig
     (termID: Int,
@@ -46,39 +48,52 @@ object Configuration {
         // smaller value means less efficient encoding, but less data to write on change
         def bitSetSegmentRange = propFactory.getIntProperty("bitSetSegmentRange", Short.MaxValue).get()
         //interval in milliseconds
-        def smallFlushInterval = propFactory.getLongProperty("smallFlushInterval", 200).get()
+        def smallFlushInterval = propFactory.getLongProperty("smallFlushInterval", 500).get()
         //number of small flushes per one large flush
-        def largeFlushInterval = propFactory.getIntProperty("largeFlushInterval", 5).get()
+        def largeFlushInterval = propFactory.getIntProperty("largeFlushInterval", 2).get()
         def pageSize = propFactory.getIntProperty("pageSize", 4*KB).get()
         def targetBlockSize: Int = pageSize - 16 // should always be pageSize - 16
         //LMDB folder will be path + '\'+"InvertedIndex"
-        def path = propFactory.getStringProperty("path","storageFolder").get
+        def path = propFactory.getStringProperty("path","storageFolder").get()
         //storage space is acquired in chunks of this size
-        def mapSizeIncreaseStep = propFactory.getIntProperty("mapSizeIncreaseStep", 1*GB).get()
+        def mapSizeIncreaseStep = propFactory.getIntProperty("mapSizeIncreaseStep", 64*MB)
         //since compaction should be all small, it's unclear for now which value is better
-        def merges_maxConcurrent = propFactory.getIntProperty("merges.maxConcurrent", 4).get()
+        def merges_maxConcurrent = propFactory.getIntProperty("merges.maxConcurrent", 4)
         //blockSize: Int = 256 * KB - 16, //don't need it because of partial reads
         //delay in ms - we need it to decouple compactions from analysis threads
-        def merges_queueCheckInterval = propFactory.getLongProperty("merges.queueCheckInterval", 100).get()
+        def merges_queueCheckInterval = propFactory.getLongProperty("merges.queueCheckInterval", 100)
         //async compactions will not start if the system CPU load is more than this
-        def merges_cpuLoadThreshold = propFactory.getFloatProperty("merges.cpuLoadThreshold", 0.95f).get()
+        def merges_cpuLoadThreshold = propFactory.getFloatProperty("merges.cpuLoadThreshold", 0.95f)
         // compactions are only performed to reclaim space used by deleted documents
         // there is no need for further consolidation of data if it is already stored
         // in blocks of size (page size)
         // CHANGING THIS VALUE IS NOT RECOMENDED
-        def merges_compactionFactor = propFactory.getIntProperty("merges.compactionFactor",2).get()
+        def merges_compactionFactor = propFactory.getIntProperty("merges.compactionFactor",2)
         // min size of merge, larger value means merge will happen later,
         // but will affect performance of other tasks
         // value should be large enough to benefit sequential read/write performance
         // merges are expected to be quite small
         // all merges are performed on separate thread
         // NOT IN USE: for large merges there is multi-step implementation, every step is of this size
-        def merges_minSize = propFactory.getIntProperty("merges.minSize", 256 * KB).get()
+        def merges_minSize = propFactory.getIntProperty("merges.minSize", 256 * KB)
         // max size of merge
         // max size of merge doesn't mean it will be max size of a single transaction commit
         // because the later may contain many merges
         // single commit size is not restricted for now
         // same size for both means that merge will be triggered after reaching the threshold
-        def merges_MaxSize = propFactory.getIntProperty("merges.minSize", 4 * MB).get()
+        def merges_MaxSize = propFactory.getIntProperty("merges.minSize", 4 * MB)
+        // ==== MONITORING
+        //Enable Slf4jReporter reporter for metrics
+        def metrics_slf4j = propFactory.getBooleanProperty("metrics.slf4j", false).get()
+        //Enable ConsoleReporter reporter for metrics
+        def metrics_console = propFactory.getBooleanProperty("metrics.console", false).get()
+        //Enable JMXReporter reporter for metrics
+        def metrics_jmx = propFactory.getBooleanProperty("metrics.jmx", true).get()
+        // True = seconds - false = Minutes
+        def metrics_rates = propFactory.getBooleanProperty("metrics.rates", true).get()
+        // Reporting Interval in seconds
+        def metrics_reportingInterval = propFactory
+            .getIntProperty("metrics.reportingInterval", 60).get()
+
     }
 }

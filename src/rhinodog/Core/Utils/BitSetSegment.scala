@@ -18,8 +18,11 @@ import java.util.concurrent.locks.ReentrantReadWriteLock
 
 import com.sun.xml.internal.messaging.saaj.util.{ByteInputStream, ByteOutputStream}
 import org.roaringbitmap.buffer.MutableRoaringBitmap
+import org.slf4j.LoggerFactory
 
 object BitSetSegment {
+    private val logger = LoggerFactory.getLogger(this.getClass)
+
     def deserialize(data: Array[Byte]): BitSetSegment = {
         val restoredBitset = new MutableRoaringBitmap()
         restoredBitset.deserialize(new DataInputStream(
@@ -29,21 +32,29 @@ object BitSetSegment {
 }
 /* all operation are thread safe */
 case class BitSetSegment
-(bitSet: MutableRoaringBitmap = new MutableRoaringBitmap(),
- private val lock: ReentrantReadWriteLock = new ReentrantReadWriteLock(true)) {
+(bitSet: MutableRoaringBitmap = new MutableRoaringBitmap()) {
+
+    private val lock: ReentrantReadWriteLock = new ReentrantReadWriteLock(true)
 
     def add(docID: Int) = {
+        BitSetSegment.logger.trace("-> add")
+        BitSetSegment.logger.debug("add docID = {}", docID)
         lock.writeLock().lock()
         bitSet.add(docID)
         lock.writeLock().unlock()
+        BitSetSegment.logger.trace("add ->")
     }
     def check(docID: Int): Boolean = {
+        BitSetSegment.logger.trace("-> check")
+        BitSetSegment.logger.debug("check docID = {}", docID)
         lock.readLock().lock()
         val ret = bitSet.contains(docID)
         lock.readLock().unlock()
+        BitSetSegment.logger.trace("check ->")
         return ret
     }
     def serialize(): Array[Byte] = {
+        BitSetSegment.logger.trace("-> serialize")
         lock.readLock().lock()
         var ret: Array[Byte] = null
         try {
@@ -54,12 +65,11 @@ case class BitSetSegment
             dataOutput.flush()
             ret = byteOutStream.getBytes
         } catch {
-            case ex: Exception => {
-                ex.printStackTrace()
-            }
+            case ex: Exception => BitSetSegment.logger.error("!!! serialize", ex)
         } finally {
             lock.readLock().unlock()
         }
+        BitSetSegment.logger.trace("serialize ->")
         return ret
     }
 }

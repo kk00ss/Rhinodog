@@ -15,6 +15,7 @@ package rhinodog.Core.Utils
 
 import java.nio.ByteBuffer
 
+import org.slf4j.LoggerFactory
 import rhinodog.Core.Definitions._
 
 import scala.collection._

@@ -17,6 +17,7 @@ import java.nio.ByteBuffer
 
 import Definitions._
 import Utils.DocPostingsSerializer
+import org.slf4j.LoggerFactory
 
 import scala.collection.immutable.TreeMap
 import scala.collection._
@@ -25,6 +26,7 @@ class BlocksWriter
 (measureSerializer: MeasureSerializerBase,
  termID: Int = 0,
  blockTargetSize: Int = 4 * 1024 - 16) {
+    private val logger = LoggerFactory.getLogger(this.getClass)
 
     val docPostingsSerializer = new DocPostingsSerializer(measureSerializer)
     val segmentSize = DocPostingsSerializer.segmentSize
@@ -38,8 +40,13 @@ class BlocksWriter
     var blocks = new TreeMap[Long, BlockInfoRAM]()
 
     def add(docPosting: DocPosting): Unit = {
-        if (docPosting.docID <= prevDocID)
-            throw new IllegalStateException("new docPosting should have larger docID than the last one")
+        logger.trace("add segmentBuffer.length = {}",segmentBuffer.length)
+        if (docPosting.docID <= prevDocID) {
+            val ex = new IllegalStateException("new docPosting should have " +
+                "larger docID than the last one")
+            logger.error("add",ex)
+            throw ex
+        }
         prevDocID = docPosting.docID
         if (segmentBuffer.length == segmentSize)
             flushSegment()
@@ -47,6 +54,8 @@ class BlocksWriter
     }
 
     def bulkAdd(data: mutable.ArrayBuffer[DocPosting]) = {
+        logger.trace("bulkAdd")
+        //TODO: add docs until segment is filled and only then flush
         flushSegment()
         val sortedData = data.sortBy(_.docID)
         var i = 0
@@ -61,15 +70,18 @@ class BlocksWriter
     def flushSegment() = if (segmentBuffer.nonEmpty) {
         val serializedSegment: Segment = serializeSegment()
         var newSegmentSerializedSize = 4 + 8 + 2 + DocPostingsSerializer.sizeInBytes(serializedSegment.data)
+        logger.trace("flushSegment newSegmentSerializedSize = {}", newSegmentSerializedSize)
         //measureSerializer.numberOfBytesRequired
         if (newSegmentSerializedSize + currentBlockEstimatedSize > blockTargetSize)
             flushBlock()
         currentBlockEstimatedSize += newSegmentSerializedSize
+        logger.trace("flushSegment currentBlockEstimatedSize = {}", currentBlockEstimatedSize)
         currentBlocksSegments :+= serializedSegment
         segmentBuffer.clear()
     }
 
     def serializeSegment(): Segment = {
+        logger.trace("serializeSegment")
         val data = docPostingsSerializer.encodeIntoComponents(segmentBuffer)
         var maxDocID = 0l
         var maxMeasure = measureSerializer.MinValue
@@ -100,12 +112,14 @@ class BlocksWriter
         val meta = BlockMetadata(maxMeasureValue,
             currentBlockEstimatedSize,
             totalDocsInBlock)
+        logger.trace("flushBlock meta = {}", meta)
         blocks += ((maxDocID, BlockInfoRAM(BlockKey(termID, maxDocID), meta, buffer.array())))
         currentBlockEstimatedSize = 0
         currentBlocksSegments = List()
     }
 
     def flushBlocks(): TreeMap[Long, BlockInfoRAM] = {
+        logger.trace("flushBlocks nBlocks = {}", blocks.size)
         flushSegment()
         flushBlock()
         val oldBlocks = blocks
