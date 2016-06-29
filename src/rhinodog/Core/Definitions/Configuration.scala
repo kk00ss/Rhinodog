@@ -84,7 +84,7 @@ object Configuration {
         def merges_MaxSize = propFactory.getIntProperty("merges.minSize", 4 * MB)
         // ==== MONITORING
         //Enable Slf4jReporter reporter for metrics
-        def metrics_slf4j = propFactory.getBooleanProperty("metrics.slf4j", false).get()
+        def metrics_slf4j = propFactory.getBooleanProperty("metrics.slf4j", true).get()
         //Enable ConsoleReporter reporter for metrics
         def metrics_console = propFactory.getBooleanProperty("metrics.console", false).get()
         //Enable JMXReporter reporter for metrics

@@ -13,11 +13,14 @@
 // limitations under the License.
 package rhinodog.Analysis
 
+import java.io.StringReader
 import java.util.concurrent.locks.ReentrantReadWriteLock
 
 import com.netflix.config.DynamicPropertyFactory
 import org.apache.lucene.analysis._
+import org.apache.lucene.analysis.tokenattributes.CharTermAttribute
 import org.apache.lucene.analysis.util.CharArraySet
+import org.apache.lucene.util.Version
 import rhinodog.Core.Definitions.BaseTraits.IAnalyzer
 import rhinodog.Core.Definitions._
 import rhinodog.Core.MeasureFormats.OkapiBM25Measure
@@ -52,13 +55,21 @@ class EnglishAnalyzer() extends IAnalyzer {
     override def analyze(doc: Document, lexicon: LocalLexicon): AnalyzedDocument = {
         analyzerLock.readLock().lock()
         try {
-            val tokenStream = englishAnalyzer.tokenStream("all", doc.text)
+            val in = new StringReader(doc.text)
+            val tokenStream = englishAnalyzer.tokenStream("all", in)
+
+            val termAtt = tokenStream.addAttribute(classOf[CharTermAttribute])
             tokenStream.reset()
-            while (tokenStream.incrementToken()) {
-                val token = tokenStream.getAttributeImplsIterator.next().toString
+            while (tokenStream.incrementToken() && termAtt.length() > 0) {
+                val termBuff= termAtt.buffer()
+                val termLen = termAtt.length()
+                val token = new String(termBuff,0,termLen)
+
                 val lemma = token.toLowerCase.filter(_.isLetter)
                 lexicon.addWord(lemma)
             }
+            tokenStream.end()
+            tokenStream.close()
             val terms = lexicon.root2TokenInfo.values.toArray.map(token => {
                 val measure = OkapiBM25Measure(token.frequency.asInstanceOf[Byte], lexicon.WordsAdded)
                 DocTerm(token.ID, measure)

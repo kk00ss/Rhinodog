@@ -184,7 +184,10 @@ class Storage
             _totalDocs.inc()
             return currentDocID
         } catch {
-            case ex: Exception => logger.error("!!! addDocument", ex)
+            case ex: Exception => {
+                logger.error("!!! addDocument", ex)
+                throw ex
+            }
         } finally { sharedLock.unlock() }
         return currentDocID
     }

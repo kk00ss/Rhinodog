@@ -107,9 +107,10 @@ class Repository(storageMode: storageModeEnum.storageMode,
             createdNewFolder = true
         }
         val oldSize = new File(newDir.getPath + File.separator + "data.mdb").length()
-        val overhead = if (oldSize % GlobalConfig.mapSizeIncreaseStep.get() == 0) 0 else 1
         val increaseStep = GlobalConfig.mapSizeIncreaseStep.get()
-        val newSize: Long = if (mapSize == 0) oldSize else mapSize
+        val overhead = if (oldSize % increaseStep == 0) 0 else 1
+        val newSize: Long = if (mapSize == 0) (oldSize / increaseStep + overhead) * increaseStep
+                            else mapSize
         this.environment = new Env()
         logger.debug("openEnvironment mapSize = {}", newSize)
         environment.setMapSize(newSize)
@@ -561,30 +562,41 @@ class Repository(storageMode: storageModeEnum.storageMode,
         }
         //TODO: rewrite retries to use tx.reset instead of creating new one
         try {
-            var tmpValue = ByteBuffer.allocate(8).putLong(newTotalDocsCount).array()
+            val tmp8 = ByteBuffer.allocate(8)
+            val tmp4 = ByteBuffer.allocate(4)
+            val tmpBlockKey = ByteBuffer.allocate(BlockKey.sizeInBytes)
+            def resetBuf = (buf: ByteBuffer) => {
+                buf.position(0)
+                buf
+            }
+            def buffer8 = resetBuf(tmp8)
+            def buffer4 = resetBuf(tmp4)
+            def bufferBlockKey = resetBuf(tmpBlockKey)
+
+            var tmpValue = buffer8.putLong(newTotalDocsCount).array()
             this.indexStatistics_DB.put(tx, "totalDocsCount".getBytes, tmpValue)
-            tmpValue = ByteBuffer.allocate(4).putInt(nextTermID).array()
+            tmpValue = buffer4.putInt(nextTermID).array()
             this.indexStatistics_DB.put(tx, "nextTermID".getBytes, tmpValue)
 
             for (blockKey <- data.deletedBlocks.iterator) {
                 logger.trace("actualFlush -- deleting = {}", blockKey)
-                val key = blockKey.serialize
+                val key = blockKey.serialize(bufferBlockKey)
                 this.postingsDB.delete(tx, key)
                 this.metadataDB.delete(tx, key)
                 this.numberOfDeletedDB.delete(tx, key)
             }
             for ((blockKey, metadataSerialized) <- data.addedMeta) {
                 logger.trace("actualFlush -- adding Metadata = {}", blockKey)
-                this.metadataDB.put(tx, blockKey.serialize, metadataSerialized)
+                this.metadataDB.put(tx, blockKey.serialize(bufferBlockKey), metadataSerialized)
             }
             for ((blockKey, blockData) <- data.addedBlocks) {
                 logger.trace("actualFlush -- adding blocks = {}", blockKey)
-                this.postingsDB.put(tx, blockKey.serialize, blockData)
+                this.postingsDB.put(tx, blockKey.serialize(bufferBlockKey), blockData)
             }
             for ((term, newID) <- data.newTerms) {
                 logger.trace("actualFlush -- adding term = {}, ID = {}", term, newID)
                 val key = term.getBytes
-                val value = ByteBuffer.allocate(4).putInt(newID).array()
+                val value = buffer4.putInt(newID).array()
                 term2ID_DB.put(key, value)
                 ID2Term_DB.put(value, key)
             }
@@ -598,28 +610,24 @@ class Repository(storageMode: storageModeEnum.storageMode,
             }
             for (docID <- data.docs.deletedDocuments.iterator()) {
                 logger.trace("actualFlush -- deleting document docID = {}", docID)
-                val key = ByteBuffer.allocate(8)
-                key.putLong(docID)
-                this.documentsDB.delete(tx, key.array())
+                val key = buffer8.putLong(docID).array()
+                this.documentsDB.delete(tx, key)
             }
             for (doc <- data.docs.addedDocuments) {
-                logger.trace("actualFlush -- adding document docID = {}", doc._1)
-                val key = ByteBuffer.allocate(8)
-                key.putLong(doc._1)
-                this.documentsDB.put(tx, key.array(), doc._2)
+                logger.info("actualFlush -- adding document docID = {} body = {}", doc._1, doc._2.length)
+                val key = buffer8.putLong(doc._1).array()
+                this.documentsDB.put(tx, key, doc._2)
             }
             for (delInfo <- metadataFlush.deletionInfo) {
                 logger.trace("actualFlush -- deletionInfo = {}", delInfo._1)
-                val key = delInfo._1.serialize
-                val value = ByteBuffer.allocate(4)
-                value.putInt(delInfo._2)
-                this.numberOfDeletedDB.put(tx, key, value.array())
+                val key = delInfo._1.serialize(bufferBlockKey)
+                val value = buffer4.putInt(delInfo._2).array()
+                this.numberOfDeletedDB.put(tx, key, value)
             }
             for (segment <- metadataFlush.bitSetSegments) {
                 logger.trace("actualFlush -- bitSetSegment key = {}", segment.key)
-                val key = ByteBuffer.allocate(8)
-                key.putLong(segment.key)
-                this.roaringBitmapsDB.put(tx, key.array(), segment.data)
+                val key = buffer8.putLong(segment.key).array()
+                this.roaringBitmapsDB.put(tx, key, segment.data)
             }
         } catch {
             case e: LMDBException => {
@@ -628,7 +636,6 @@ class Repository(storageMode: storageModeEnum.storageMode,
                     abort(e)
                     //TODO: make 2 - configurable parameter
                     if (e.getErrorCode == LMDBException.MAP_FULL && attempt < 2) {
-                        logger.warn("actualFlush -- retrying transaction with larger mapSize")
                         isAborted = false
                         //close, increase mapSize, open
                         val currentSize = this.environment.info().getMapSize
@@ -637,6 +644,7 @@ class Repository(storageMode: storageModeEnum.storageMode,
                         closeEnvironment()
                         openEnvironment(newSize)
                         //secondAttempt
+                        logger.warn("actualFlush -- MAP_FULL oldSize = {} newSize = {}",currentSize,newSize)
                         actualFlush(data,
                             metadataFlush,
                             newTotalDocsCount: Long,

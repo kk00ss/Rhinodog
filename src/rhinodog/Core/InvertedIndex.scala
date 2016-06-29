@@ -126,7 +126,10 @@ class InvertedIndex
             docID = storage.addDocument(analyzedDocument)
             success = true
         } catch {
-            case e: Exception => logger.debug("!!! addDocument", e)
+            case ex: Exception => {
+                logger.debug("!!! addDocument", ex)
+                throw ex
+            }
         } finally {
             nAnalysisThreadsActive.decrementAndGet()
             sharedLock.unlock()

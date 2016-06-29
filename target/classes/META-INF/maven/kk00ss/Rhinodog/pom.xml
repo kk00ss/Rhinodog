@@ -7,7 +7,6 @@
     <artifactId>Rhinodog</artifactId>
     <version>0.2</version>
     <url>https://github.com/kk00ss/InvertedIndex</url>
-    <description>Yet another inverted index implementation, see project url for details</description>
     <licenses>
         <license>
             <name>Apache License, Version 2.0</name>
@@ -85,11 +84,6 @@
         </dependency>
         <!--Benchmarks related-->
         <dependency>
-            <groupId>info.bliki.wiki</groupId>
-            <artifactId>bliki-core</artifactId>
-            <version>3.1.0</version>
-        </dependency>
-        <dependency>
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-core</artifactId>
             <version>${lucene.version}</version>
@@ -105,40 +99,4 @@
             <version>${lucene.version}</version>
         </dependency>
     </dependencies>
-    <!--<build>
-        <sourceDirectory>src</sourceDirectory>
-        <plugins>
-            <plugin>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.1</version>
-                <configuration>
-                    <source>1.8</source>
-                    <target>1.8</target>
-                </configuration>
-            </plugin>
-            <plugin>
-                <groupId>org.scalastyle</groupId>
-                <artifactId>scalastyle-maven-plugin</artifactId>
-                <version>0.8.0</version>
-                <configuration>
-                    <verbose>false</verbose>
-                    <failOnViolation>true</failOnViolation>
-                    <includeTestSourceDirectory>true</includeTestSourceDirectory>
-                    <failOnWarning>false</failOnWarning>
-                    <sourceDirectory>${basedir}/src/rhinodog</sourceDirectory>
-                    <testSourceDirectory>${basedir}/src/test</testSourceDirectory>
-                    <configLocation>${basedir}/scalastyle_config.xml</configLocation>
-                    <outputFile>${project.basedir}/scalastyle-output.xml</outputFile>
-                    <outputEncoding>UTF-8</outputEncoding>
-                </configuration>
-                <executions>
-                    <execution>
-                        <goals>
-                            <goal>check</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
-        </plugins>
-    </build>-->
 </project>
