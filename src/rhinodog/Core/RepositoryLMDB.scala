@@ -17,23 +17,21 @@ import java.io._
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.{AtomicInteger, AtomicLong}
 import java.util.concurrent.locks.{ReentrantLock, ReentrantReadWriteLock}
-import java.util.concurrent.locks.ReentrantReadWriteLock.WriteLock
 import java.util.function.LongBinaryOperator
 
 import org.fusesource.lmdbjni._
 import org.slf4j.LoggerFactory
-
+import rhinodog.Core.Definitions.BaseTraits._
+import rhinodog.Core.Definitions.Caching._
+import rhinodog.Core.Definitions.Configuration._
 import rhinodog.Core.Definitions._
-import BaseTraits._
-import Caching._
-import Configuration._
 
 import scala.collection.JavaConversions.{asScalaIterator, mapAsScalaMap}
 import scala.collection.Seq
 
 class Repository(storageMode: storageModeEnum.storageMode,
-                 //full names of measure, analyzer
-                 watermark: String)
+                     //full names of measure, analyzer
+                     watermark: String)
     extends IRepository with AutoCloseable {
     private val logger = LoggerFactory.getLogger(this.getClass)
 
@@ -44,14 +42,13 @@ class Repository(storageMode: storageModeEnum.storageMode,
     private var documentsDB: Database = null
     private var numberOfDeletedDB: Database = null
     private var roaringBitmapsDB: Database = null
-    private var partialFlushWAL_DB: Database = null
 
     private var term2ID_DB: Database = null
     private var ID2Term_DB: Database = null
 
     private var indexStatistics_DB: Database = null
 
-    val numberOfDatabases = 16
+    val numberOfDatabases = 8
 
     //TODO investigate re-usability of WriteCache instances
     var writeCache = new WriteCache()
@@ -108,8 +105,8 @@ class Repository(storageMode: storageModeEnum.storageMode,
         }
         val oldSize = new File(newDir.getPath + File.separator + "data.mdb").length()
         val increaseStep = GlobalConfig.mapSizeIncreaseStep.get()
-        val overhead = if (oldSize % increaseStep == 0) 0 else 1
-        val newSize: Long = if (mapSize == 0) (oldSize / increaseStep + overhead) * increaseStep
+        val newSize: Long = if (mapSize == 0 || mapSize < oldSize)
+                            if(oldSize > increaseStep) oldSize else increaseStep
                             else mapSize
         this.environment = new Env()
         logger.debug("openEnvironment mapSize = {}", newSize)
@@ -124,7 +121,6 @@ class Repository(storageMode: storageModeEnum.storageMode,
         this.documentsDB = environment.openDatabase("documents")
         this.numberOfDeletedDB = environment.openDatabase("numberOfDeletedByBlock")
         this.roaringBitmapsDB = environment.openDatabase("roaringBitmaps")
-        this.partialFlushWAL_DB = environment.openDatabase("partialFlushWAL_DB")
         this.term2ID_DB = environment.openDatabase("term2ID_DB")
         this.ID2Term_DB = environment.openDatabase("ID2Term_DB")
 
@@ -168,11 +164,11 @@ class Repository(storageMode: storageModeEnum.storageMode,
         this.postingsDB.close()
         this.documentsDB.close()
         this.roaringBitmapsDB.close()
-        this.partialFlushWAL_DB.close()
-        this.environment.close()
         this.term2ID_DB.close()
         this.ID2Term_DB.close()
         this.indexStatistics_DB.close()
+
+        this.environment.close()
         logger.info("closeEnvironment ->")
     }
 
@@ -233,40 +229,7 @@ class Repository(storageMode: storageModeEnum.storageMode,
 
     def restoreMetadata(hook: RestoreMetadataHook): Unit = {
         logger.info("restoreMetadata ->")
-        //removing garbage from partially written data, from large compactions
-        val writeTx = this.environment.createWriteTransaction()
-        try {
-            val cursor = this.partialFlushWAL_DB.bufferCursor(writeTx)
-            try {
-                if (cursor.first()) {
-                    do {
-                        val data = cursor.valBytes()
-                        val buffer = ByteBuffer.wrap(data)
-                        val partOfFailedWrite = PartialFlushWAL.deserialize(buffer, data.length)
-                        logger.warn("restoreMetadata -- Garbage from aborted/failed partial flush", partOfFailedWrite)
-                        partOfFailedWrite.blockKeys.foreach(key => {
-                            //TODO: FlyWeight can be used here, compare with ZeroCopy DirectBuffer
-                            val keyArr = key.serialize
-                            try {
-                                this.postingsDB.delete(writeTx, keyArr)
-                                this.metadataDB.delete(writeTx, keyArr)
-                            } catch {
-                                //shouldn't happen at all due to transactional flush implementation
-                                //log level would be Error
-                                case e: LMDBException => logger.error("!!! restoreMetadata", e)
-                            }
-                        })
-                        cursor.delete()
-                    } while (cursor.next())
-                }
-            } finally {
-                cursor.close()
-            }
-        } catch {
-            case e: Exception => logger.error("!!! restoreMetadata", e)
-        } finally {
-            writeTx.close()
-        }
+
         val tx = this.environment.createReadTransaction()
         try {
             var cursor = this.metadataDB.bufferCursor(tx)
@@ -410,34 +373,6 @@ class Repository(storageMode: storageModeEnum.storageMode,
         return ret
     }
 
-    /*override def getBlockBuffer(blockKey: BlockKey): DirectBuffer = {
-        //TODO: check segmentsCache - or probably use in BlockReader ???
-        //check writeCache
-        if(max_Flushed_DocID.get() < blockKey.maxDocID /*&& !flushLock.isWriteLocked*/) {
-            //TODO: verify assumption - we can safely read from writeCache
-            //TODO: because GC strongReferences (should be)/are threadsafe
-            var termWriteCache = writeCache.terms.get(blockKey.termID)
-            var blockWC: BlockWriteCache = null
-            if(termWriteCache != null)
-                blockWC = termWriteCache.addedBlocks.get(blockKey.smallKey)
-            if(blockWC == null) {
-                termWriteCache = dataBeingFlushed.terms.get(blockKey.termID)
-                if(termWriteCache != null)
-                    blockWC = termWriteCache.addedBlocks.get(blockKey.smallKey)
-            }
-            if (blockWC != null)
-                return new DirectBuffer(blockWC.blockData)
-        }
-        //if not found - go to LMDB
-        val key = blockKey.serialize
-        val keyBuffer = new DirectBuffer(key)
-        val ret = new DirectBuffer()
-        val rc = this.postingsDB.get(keyBuffer,ret)
-        if(rc != 0)
-            throw new IllegalStateException(s"required block is absent LMDB rc = $rc")
-        else return ret
-    }*/
-
     /*to only save block pass null for meta in TreeMetadata*/
     override def saveBlock(key: BlockKey,
                            block: BlockDataSerialized,
@@ -476,45 +411,19 @@ class Repository(storageMode: storageModeEnum.storageMode,
         }
     }
 
-    //============= HANDLING PartialFlushWAL =============================
-    override def writePartialFlushWAL(data: PartialFlushWAL): Array[Byte] = {
-        logger.debug("-> writePartialFlushWAL")
-        val sharedLock = writeCacheSHLock.readLock()
-        sharedLock.lock()
-        var key: Array[Byte] = null
-        try {
-            val dataBuffer = ByteBuffer.allocate(data.bytesRequired)
-            data.serialize(dataBuffer)
-            //TODO: test these two options
-            key = data.blockKeys.last.serialize //java.util.UUID.randomUUID.toString.getBytes()
-            writeCache.partialFlushInfosToAdd.put(key, dataBuffer.array())
-        } catch {
-            case ex: Exception => logger.error("writePartialFlushWAL", ex)
-        }
-        finally {
-            sharedLock.unlock()
-        }
-        return key
-    }
-
-    override def deletePartialFlushWAL(key: Array[Byte]) = {
-        logger.debug("-> deletePartialFlushWAL")
-        val sharedLock = writeCacheSHLock.readLock()
-        sharedLock.lock()
-        writeCache.partialFlushInfosToDELETE.add(key)
-        sharedLock.unlock()
-    }
-
     //=======================================================================
     //======== FLUSHING WRITE CACHE CONTENTS TO DISK ================================
     //=======================================================================
+    private val flushInProgressLock = new ReentrantLock()
+
     override def flush(lastDocIDAssigned: Long,
                        newTotalDocsCount: Long,
-                       storageLock: WriteLock,
+                       storageLock: ReentrantLock,
                        metadataFlush: MetadataToFlush) = {
         logger.info("-> flush lastDocIDAssigned = {}", lastDocIDAssigned)
         val exclusiveLock = writeCacheSHLock.writeLock()
         exclusiveLock.lock()
+        flushInProgressLock.lock()
         try {
             this.totalDocsCount = newTotalDocsCount
             if (storageLock != null && storageLock.isHeldByCurrentThread)
@@ -538,11 +447,12 @@ class Repository(storageMode: storageModeEnum.storageMode,
         } finally {
             if (exclusiveLock.isHeldByCurrentThread)
                 exclusiveLock.unlock()
+            if (flushInProgressLock.isHeldByCurrentThread)
+                flushInProgressLock.unlock()
         }
         logger.info("flush ->")
     }
 
-    private val flushInProgressLock = new ReentrantLock()
 
     private def actualFlush(data: WriteCache,
                             metadataFlush: MetadataToFlush,
@@ -551,8 +461,8 @@ class Repository(storageMode: storageModeEnum.storageMode,
                             attempt: Byte = 1): Unit = {
         logger.debug("flush newTotalDocsCount = {}, nextTermID = {}, attempt = {}",
             Array(newTotalDocsCount, nextTermID, attempt))
-        flushInProgressLock.lock()
         val tx = this.environment.createWriteTransaction()
+        val start = System.currentTimeMillis()
         var isAborted = false
         val abort = (e: Exception) => {
             isAborted = true
@@ -597,26 +507,13 @@ class Repository(storageMode: storageModeEnum.storageMode,
                 logger.trace("actualFlush -- adding term = {}, ID = {}", term, newID)
                 val key = term.getBytes
                 val value = buffer4.putInt(newID).array()
-                term2ID_DB.put(key, value)
-                ID2Term_DB.put(value, key)
-            }
-            for (key <- data.partialFlushInfosToDELETE.iterator()) {
-                logger.trace("actualFlush -- deleting partialFlushInfo flushID = {}", key)
-                this.partialFlushWAL_DB.delete(tx, key)
-            }
-            for ((key, value) <- data.partialFlushInfosToAdd) {
-                logger.trace("actualFlush -- adding partialFlushInfo flushID = {}", key)
-                this.partialFlushWAL_DB.put(tx, key, value)
+                term2ID_DB.put(tx, key, value)
+                ID2Term_DB.put(tx, value, key)
             }
             for (docID <- data.docs.deletedDocuments.iterator()) {
                 logger.trace("actualFlush -- deleting document docID = {}", docID)
                 val key = buffer8.putLong(docID).array()
                 this.documentsDB.delete(tx, key)
-            }
-            for (doc <- data.docs.addedDocuments) {
-                logger.info("actualFlush -- adding document docID = {} body = {}", doc._1, doc._2.length)
-                val key = buffer8.putLong(doc._1).array()
-                this.documentsDB.put(tx, key, doc._2)
             }
             for (delInfo <- metadataFlush.deletionInfo) {
                 logger.trace("actualFlush -- deletionInfo = {}", delInfo._1)
@@ -663,13 +560,13 @@ class Repository(storageMode: storageModeEnum.storageMode,
         } finally {
             if (!isAborted) {
                 tx.commit()
+                val time = System.currentTimeMillis() - start
+                logger.info("Repository actualFlush took {} ms",time)
                 tx.close()
                 if (attempt > 1)
                     logger.warn(" actualFlush -- Successful retry of write transaction")
                 logger.info("actualFlush successful ->")
             }
-            if (flushInProgressLock.isHeldByCurrentThread)
-                flushInProgressLock.unlock()
         }
     }
 

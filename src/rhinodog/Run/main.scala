@@ -13,6 +13,8 @@
 // limitations under the License.
 package rhinodog.Run
 
+import java.util.concurrent.atomic.AtomicInteger
+
 import rhinodog.Analysis.EnglishAnalyzer
 import rhinodog.Core.Definitions.Configuration.storageModeEnum
 import rhinodog.Core.Definitions.Document
@@ -23,7 +25,8 @@ import info.bliki.wiki.dump.IArticleFilter
 import info.bliki.wiki.dump.Siteinfo
 import info.bliki.wiki.dump.WikiArticle
 import info.bliki.wiki.dump.WikiXMLParser
-import java.io.File
+import java.io._
+
 
 import scala.collection._
 
@@ -34,26 +37,18 @@ object main {
         storageModeEnum.READ_WRITE)
 
     def main(args: Array[String]): Unit = {
-        //scala.io.StdIn.readLine()
-        //val document = scala.io.Source.fromFile("testArticle.txt").mkString
-        //var start = System.currentTimeMillis()
-        //val ID = invertedIndex.addDocument(Document(document))
-        //var time = System.currentTimeMillis() - start
-        //println(s"analysis time $time")
-        //start = System.currentTimeMillis()
-        //invertedIndex.flush()
-        //time = System.currentTimeMillis() - start
-        //println(s"flush time $time")
 
+                val folder = new File("WikiText")
+                folder.listFiles().par.foreach(file =>  {
+                    val text = scala.io.Source.fromFile(file).mkString
+                    val ID = invertedIndex.addDocument(Document(text))
+                })
 
-        val bz2Filename = "G:\\Downloads\\Archives\\enwiki-20160601-pages-meta-current1.xml-p000000010p000030303.bz2";
-        run(bz2Filename)
-
-                val topLevelIterator = invertedIndex
-                    .getQueryEngine()
-                    .buildTopLevelIterator(TermToken("category"))
-
-                val ret = invertedIndex.getQueryEngine().executeQuery(topLevelIterator, 10)
+//        val topLevelIterator = invertedIndex
+//            .getQueryEngine()
+//            .buildTopLevelIterator(TermToken("clock"))
+//
+//        val ret = invertedIndex.getQueryEngine().executeQuery(topLevelIterator, 10)
 
         invertedIndex.close()
 
@@ -62,16 +57,24 @@ object main {
 
     private class DemoArticleFilter extends IArticleFilter {
         var counter = 0
+        var totalSize = 0
+
         def process(page: WikiArticle, siteinfo: Siteinfo) {
             val text: String = page.getText
+            val folder = "WikiText"
             if (text.length > 100 && !text.startsWith("#REDIRECT")) {
-//                System.out.println(page.getTitle)
-//                System.out.println(text)
-                val ID = invertedIndex.addDocument(Document(text))
-                println(s"new docID = $ID")
+                totalSize += text.length
+                try {
+                    val file = new File(folder + File.separator + counter + ".txt")
+                    file.createNewFile()
+                    val fc = new FileOutputStream(file)
+                    fc.write(text.getBytes())
+                } catch {
+                    case ex: Exception => ex.printStackTrace()
+                }
+                //                val ID = invertedIndex.addDocument(Document(text))
+                println(s"new docID = $counter total documentsSize = $totalSize")
                 counter += 1
-                if(counter % 1000 == 0)
-                    invertedIndex.flush()
             }
         }
     }

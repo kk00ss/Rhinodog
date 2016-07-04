@@ -23,7 +23,7 @@ object Configuration {
     // Constants
     val KB = 1024
     val MB = 1024 * KB
-    val GB = 1024 * MB
+    val GB = 1024l * MB
 
     object storageModeEnum
         extends Enumeration {
@@ -37,9 +37,8 @@ object Configuration {
      metadataManager: IMetadataManager,
      metrics: MetricRegistry)
 
-    case class TermWriterConfig
-    (termID: Int,
-     mainComponents: MainComponents,
+    case class TermsDocsHashConfig
+    (mainComponents: MainComponents,
      targetSize: Int)
 
     object GlobalConfig {
@@ -47,16 +46,16 @@ object Configuration {
         // number of docIDs for which there will be single bitmap segment
         // smaller value means less efficient encoding, but less data to write on change
         def bitSetSegmentRange = propFactory.getIntProperty("bitSetSegmentRange", Short.MaxValue).get()
+        def autoFlush = propFactory.getBooleanProperty("autoFlush", true).get()
         //interval in milliseconds
-        def smallFlushInterval = propFactory.getLongProperty("smallFlushInterval", 500).get()
+        def flushInterval = propFactory.getLongProperty("flushInterval", 10*1000).get()
         //number of small flushes per one large flush
-        def largeFlushInterval = propFactory.getIntProperty("largeFlushInterval", 2).get()
-        def pageSize = propFactory.getIntProperty("pageSize", 4*KB).get()
+        def pageSize = propFactory.getIntProperty("pageSize", 64*KB).get()
         def targetBlockSize: Int = pageSize - 16 // should always be pageSize - 16
         //LMDB folder will be path + '\'+"InvertedIndex"
         def path = propFactory.getStringProperty("path","storageFolder").get()
         //storage space is acquired in chunks of this size
-        def mapSizeIncreaseStep = propFactory.getIntProperty("mapSizeIncreaseStep", 64*MB)
+        def mapSizeIncreaseStep = propFactory.getLongProperty("mapSizeIncreaseStep", 4*GB)
         //since compaction should be all small, it's unclear for now which value is better
         def merges_maxConcurrent = propFactory.getIntProperty("merges.maxConcurrent", 4)
         //blockSize: Int = 256 * KB - 16, //don't need it because of partial reads

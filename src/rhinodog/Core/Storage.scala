@@ -16,7 +16,7 @@ package rhinodog.Core
 import java.nio.file.Paths
 import java.util.{TimerTask, Timer}
 import java.util.concurrent._
-import java.util.concurrent.locks.ReentrantReadWriteLock
+import java.util.concurrent.locks.{ReentrantLock, ReentrantReadWriteLock}
 import java.util.concurrent.locks.ReentrantReadWriteLock.WriteLock
 import java.util.concurrent.atomic.{AtomicInteger, AtomicLong}
 
@@ -39,60 +39,32 @@ class Storage
     private val logger = LoggerFactory.getLogger(this.getClass)
     import mainComponents._
 
-    private val termWriters = new ConcurrentHashMap[Int, TermWriter]()
-    private val termWriterConfigTemplage = new TermWriterConfig(0, mainComponents,
-                                                                GlobalConfig.targetBlockSize)
+    val termsDocsHash
+    = new TermsDocsHash(TermsDocsHashConfig(mainComponents,GlobalConfig.targetBlockSize))
+
     @volatile
     private var isOpen = true
 
-    def getTermWriter(termID: Int): TermWriter = {
-        if (termWriters.contains(termID)) {
-            logger.trace("getTermWriter from cache termID = {}",termID)
-            return termWriters.get(termID)
-        }
-        else {
-            val conf = termWriterConfigTemplage.copy(termID)
-            val newInstance = new TermWriter(conf)
-            termWriters.putIfAbsent(termID, newInstance)
-            logger.trace("getTermWriter new one termID = {}",termID)
-            return termWriters.get(termID)
-        }
-    }
-
     //MONITORING SECTION
-    private val _totalDocs = metrics.counter("totalDocs")
-    private val _addedDocs = metrics.meter("addedDocs")
-    private val _removedDocs = metrics.meter("removedDocs")
-    private val _numScheduledCompactions = metrics.counter("numScheduledCompactions")
-    private val _compactionsRunning = metrics.counter("compactionsRunning")
-    private val _addDocumentTimer = metrics.timer("addDocumentTimer")
-    private val _smallFlushTimer = metrics.timer("smallFlushTimer")
-    private val _largeFlushTimer = metrics.timer("largeFlushTimer")
+    private val _totalDocs = metrics.counter("storage - totalDocs")
+    private val _removedDocs = metrics.meter("storage - removedDocs")
+    private val _numScheduledCompactions = metrics.counter("storage - numScheduledCompactions")
+    private val _compactionsRunning = metrics.counter("storage - compactionsRunning")
+    private val _addDocumentTimer = metrics.timer("storage - addDocumentTimer")
+    private val _flushTimer = metrics.timer("storage - flushTimer")
 
     private val compactionsRunning = new AtomicInteger(0)
 
 
     private lazy val docIDCounter = new AtomicLong(repository.getMaxDocID)
     @volatile
-    private var smallFlush_lastDocID = repository.getMaxDocID
+    private var lastDocIDFlushed = repository.getMaxDocID
 
     private val modifyOrFlushLock = new ReentrantReadWriteLock()
     private val compactionsOrCloseLock = new ReentrantReadWriteLock()
     private val docSerializer = new DocumentSerializer (measureSerializer)
 
-    def withSharedLock(func: ()=> Unit) = {
-        logger.debug("-> withSharedLock")
-        val sharedLock = modifyOrFlushLock.readLock()
-        sharedLock.lock()
-        try {
-            func()
-        } finally {
-            sharedLock.unlock()
-            logger.debug("withSharedLock ->")
-        }
-    }
-
-    //========================= Merge Scheduling ===================================================
+    //========================= Merge Scheduling =============================================
     private val scheduledCompactions = new ConcurrentLinkedDeque[ICompactionJob]
 
     def addCompactionJob(job: ICompactionJob): Unit = {
@@ -123,8 +95,13 @@ class Storage
                             //compute merges
                             val saveChangesHook = compactionToRun.computeChanges()
                             //save results of all the merges
-                            val tw = getTermWriter(compactionToRun.termID)
-                            saveChangesHook(withSharedLock, tw.withLock)
+                            val writeLock = modifyOrFlushLock.writeLock()
+                            writeLock.lock()
+                            try {
+                                saveChangesHook()
+                            } finally {
+                                writeLock.unlock()
+                            }
                         }
                     } finally {
                         compactionsOrCloseLock.readLock().unlock()
@@ -137,24 +114,17 @@ class Storage
     }}, GlobalConfig.merges_queueCheckInterval.get(),
         GlobalConfig.merges_queueCheckInterval.get())
 
-    private val nSmallFlushesFromLastLarge = new AtomicInteger(0)
-
-    timer.schedule(new TimerTask {
-        override def run(): Unit = if(isOpen) {
-            if(docIDCounter.get() > smallFlush_lastDocID) {
-                logger.debug("timerTask for flush, nSmallFlushesFromLastLarge ={}",
-                            nSmallFlushesFromLastLarge)
-                smallFlush()
-                val tmp = nSmallFlushesFromLastLarge.incrementAndGet()
-                if (tmp == GlobalConfig.largeFlushInterval) {
-                    largeFlush()
-                    nSmallFlushesFromLastLarge.set(0)
-                }
+    if(GlobalConfig.autoFlush) {
+        timer.schedule(new TimerTask {
+            override def run(): Unit = if (isOpen) {
+                if (docIDCounter.get() > lastDocIDFlushed) {
+                    logger.debug("timerTask for flush")
+                        flush()
+                 }
             }
-        }
-    }, GlobalConfig.smallFlushInterval,
-        GlobalConfig.smallFlushInterval)
-
+        }, GlobalConfig.flushInterval,
+            GlobalConfig.flushInterval)
+    }
 
 
     val operatingSystemMXBean = management.ManagementFactory.getOperatingSystemMXBean
@@ -171,11 +141,9 @@ class Storage
         var currentDocID = -1l
         try {
             currentDocID = docIDCounter.incrementAndGet()
-            _addedDocs.mark()
             val context = _addDocumentTimer.time()
             document.terms.foreach(docTerm => {
-                val docPosting = new DocPosting(currentDocID, docTerm.measure)
-                getTermWriter(docTerm.termID).addDocument (docPosting)
+                termsDocsHash.addDocument (currentDocID, docTerm)
             })
             val docSerialized = docSerializer.serialize(document)
             repository.addDocument(currentDocID, docSerialized)
@@ -211,73 +179,38 @@ class Storage
                 totalDocs.decrementAndGet()
                 _removedDocs.mark()
                 _totalDocs.dec()
-                val operations = document.terms
-                    .map(td => (td.termID, getTermWriter(td.termID)))
-                    .toBuffer
-                var operationTimeout = 1
-                while (operations.nonEmpty) {
-                    for (op <- operations) {
-                        val ret = op._2.tryWithLock(
-                            () => metadataManager.deleteFromTerm(op._1, documentID),
-                            operationTimeout)
-                        if (ret)
-                            operations -= op
-                    }
-                    operationTimeout *= 2
-                }
+                document.terms.foreach(x => metadataManager.deleteFromTerm(x.termID, documentID))
             }
         } finally {
             sharedLock.unlock()
         }
     }
 
-    def flush() = {
-        val exclusiveLock = modifyOrFlushLock.writeLock()
-        exclusiveLock.lock()
-        try {
-            smallFlush()
-            largeFlush()
-        } finally {
-            if(exclusiveLock.isHeldByCurrentThread)
-                exclusiveLock.unlock()
-        }
-    }
+    val flushInProgressLock = new ReentrantLock()
 
-    def smallFlush() = {
-        logger.info("-> smallFlush")
-        val exclusiveLock = modifyOrFlushLock.writeLock()
-        val wasAlreadyLocked = exclusiveLock.isHeldByCurrentThread
-        if(!wasAlreadyLocked)
-            exclusiveLock.lock()
-        try {
-            val context = _smallFlushTimer.time()
-            termWriters.foreach(_._2.smallFlush())
-            smallFlush_lastDocID = docIDCounter.get()
-            context.stop()
-        } finally {
-            if(!wasAlreadyLocked && exclusiveLock.isHeldByCurrentThread)
-                exclusiveLock.unlock()
-        }
-    }
-
-    def largeFlush(): Unit = {
+    def flush(): Unit = {
         logger.info("-> largeFlush")
         val exclusiveLock = modifyOrFlushLock.writeLock()
         val wasAlreadyLocked = exclusiveLock.isHeldByCurrentThread
         if(!wasAlreadyLocked)
             exclusiveLock.lock()
         try {
-            val context = _largeFlushTimer.time()
-            termWriters.foreach(_._2.largeFlush())
+            val context = _flushTimer.time()
+            termsDocsHash.flush(exclusiveLock)
+            if(exclusiveLock.isHeldByCurrentThread)
+                exclusiveLock.unlock()
+            flushInProgressLock.lock()
             val metadataToFlush = metadataManager.flush
             repository.flush(docIDCounter.get(),
                 this.getTotalDocs,
-                exclusiveLock,
+                flushInProgressLock,
                 metadataToFlush)
             context.stop()
         } finally {
             if(!wasAlreadyLocked  && exclusiveLock.isHeldByCurrentThread)
                 exclusiveLock.unlock()
+            if(flushInProgressLock.isHeldByCurrentThread)
+                flushInProgressLock.unlock()
         }
     }
 
@@ -289,8 +222,6 @@ class Storage
             logger.info("close -- timer canceled")
             flush()
             logger.info("close -- data flushed")
-            repository.close()
-            logger.info("close -- index closed")
         } finally { compactionsOrCloseLock.writeLock().unlock() }
     }
 }

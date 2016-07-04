@@ -15,9 +15,9 @@ package rhinodog.Core.Definitions
 
 
 import java.nio.ByteBuffer
+import java.util.concurrent.locks.ReentrantLock
 import rhinodog.Analysis.LocalLexicon
 import rhinodog.Core.Definitions.Caching.BlockCache
-import rhinodog.Core.PartialFlushWAL
 
 import scala.collection._
 
@@ -62,7 +62,7 @@ object BaseTraits {
     trait ICompactionJob {
         val termID: Int
         //returned function should only be run with TermWriter.tryWithLock
-        def computeChanges(): SaveChangesHook
+        def computeChanges(): Function0[Unit]
     }
 
     trait ICompactionManager {
@@ -123,12 +123,9 @@ object BaseTraits {
         //required for merging
         def replaceBlocks(deletedBlocks: Seq[BlockKey], blocks: Seq[BlockCache]): Unit
 
-        def writePartialFlushWAL(data: PartialFlushWAL): Array[Byte]
-        def deletePartialFlushWAL(key: Array[Byte]): Unit
-
         def flush(lastDocIDAssigned: Long,
                   newTotalDocsCount: Long,
-                  storageLock: WriteLock,
+                  storageLock: ReentrantLock,
                   metadataFlush: MetadataToFlush): Unit
         def close(): Unit
     }

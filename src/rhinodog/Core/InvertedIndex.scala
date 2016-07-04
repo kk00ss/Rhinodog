@@ -54,47 +54,55 @@ class InvertedIndex
         val watermark = "measureSerializer name: " + measureSerializer.getClass.getCanonicalName +
             " analyzer name: " + analyzer.getClass.getCanonicalName
         val repository = new Repository(storageMode, watermark)
-        val metadataManager = new MetadataManager(measureSerializer)
+        try {
+            val metadataManager = new MetadataManager(measureSerializer)
 
-        val mainComponents = MainComponents(measureSerializer,
-                                            repository,
-                                            metadataManager,
-                                            metrics)
-        val compactionManager = new CompactionManager(mainComponents)
-        this.storage = new Storage(mainComponents)
+            val mainComponents = MainComponents(measureSerializer,
+                repository,
+                metadataManager,
+                metrics)
+            val compactionManager = new CompactionManager(mainComponents)
+            this.storage = new Storage(mainComponents)
 
-        compactionManager.addCompactionJob = this.storage.addCompactionJob
-        metadataManager.mergeDetector = compactionManager
-        repository.restoreMetadata(metadataManager.restoreMetadataHook)
-        this.queryEnginge = new QueryEngine(mainComponents, storage)
-        this._mainComponents = mainComponents
+            compactionManager.addCompactionJob = this.storage.addCompactionJob
+            metadataManager.mergeDetector = compactionManager
+            repository.restoreMetadata(metadataManager.restoreMetadataHook)
+            this.queryEnginge = new QueryEngine(mainComponents, storage)
+            this._mainComponents = mainComponents
 
-        logger.info("info -- init compete, configuring reporting")
-        //Reporting metricx
-        val reportingInterval = GlobalConfig.metrics_reportingInterval
-        val rateTimeUnit = if(GlobalConfig.metrics_rates) TimeUnit.SECONDS
-                           else TimeUnit.MINUTES
-        if(GlobalConfig.metrics_slf4j) {
-            val slf4jReporter = Slf4jReporter.forRegistry(metrics)
-                .outputTo(LoggerFactory.getLogger("com.example.metrics"))
-                .convertRatesTo(rateTimeUnit)
-                .convertDurationsTo(TimeUnit.MILLISECONDS)
-                .build()
-            slf4jReporter.start(reportingInterval, TimeUnit.SECONDS)
-        }
-        if(GlobalConfig.metrics_console) {
-            val consoleReporter = ConsoleReporter.forRegistry(metrics)
-                .convertRatesTo(rateTimeUnit)
-                .convertDurationsTo(TimeUnit.MILLISECONDS)
-                .build()
-            consoleReporter.start(reportingInterval, TimeUnit.SECONDS)
-        }
-        if(GlobalConfig.metrics_jmx) {
-            val jmxReporter = JmxReporter.forRegistry(metrics)
-                .convertRatesTo(rateTimeUnit)
-                .convertDurationsTo(TimeUnit.MILLISECONDS)
-                .build()
-            jmxReporter.start()
+            logger.info("info -- init compete, configuring reporting")
+            //Reporting metricx
+            val reportingInterval = GlobalConfig.metrics_reportingInterval
+            val rateTimeUnit = if (GlobalConfig.metrics_rates) TimeUnit.SECONDS
+            else TimeUnit.MINUTES
+            if (GlobalConfig.metrics_slf4j) {
+                val slf4jReporter = Slf4jReporter.forRegistry(metrics)
+                    .outputTo(LoggerFactory.getLogger("com.example.metrics"))
+                    .convertRatesTo(rateTimeUnit)
+                    .convertDurationsTo(TimeUnit.MILLISECONDS)
+                    .build()
+                slf4jReporter.start(reportingInterval, TimeUnit.SECONDS)
+            }
+            if (GlobalConfig.metrics_console) {
+                val consoleReporter = ConsoleReporter.forRegistry(metrics)
+                    .convertRatesTo(rateTimeUnit)
+                    .convertDurationsTo(TimeUnit.MILLISECONDS)
+                    .build()
+                consoleReporter.start(reportingInterval, TimeUnit.SECONDS)
+            }
+            if (GlobalConfig.metrics_jmx) {
+                val jmxReporter = JmxReporter.forRegistry(metrics)
+                    .convertRatesTo(rateTimeUnit)
+                    .convertDurationsTo(TimeUnit.MILLISECONDS)
+                    .build()
+                jmxReporter.start()
+            }
+        } catch {
+            case e: Exception => {
+                logger.error("!!! Initialization failed ", e)
+                this.close()
+                throw e
+            }
         }
         logger.info("info ->")
     }
@@ -127,7 +135,8 @@ class InvertedIndex
             success = true
         } catch {
             case ex: Exception => {
-                logger.debug("!!! addDocument", ex)
+                logger.error("!!! addDocument", ex)
+                this.close()
                 throw ex
             }
         } finally {
@@ -151,7 +160,11 @@ class InvertedIndex
             storage.removeDocument(docID)
             success = true
         } catch {
-            case e: Exception => logger.debug("!!! removeDocument", e)
+            case e: Exception => {
+                logger.error("!!! removeDocument", e)
+                this.close()
+                throw e
+            }
         } finally {
             sharedLock.unlock()
         }
@@ -165,7 +178,11 @@ class InvertedIndex
             storage.flush()
             success = true
         } catch {
-            case e: Exception => logger.error("!!! flush", e)
+            case e: Exception => {
+                logger.error("!!! flush", e)
+                this.close()
+                throw e
+            }
         } finally {
             if(exclusiveLock.isHeldByCurrentThread)
                 exclusiveLock.unlock()
@@ -179,6 +196,8 @@ class InvertedIndex
         exclusiveLock.lock()
         try {
             storage.close()
+            _mainComponents.repository.close()
+            logger.info("close -- index closed")
         } catch {
             case e: Exception => logger.debug("!!! close", e)
         } finally {

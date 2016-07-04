@@ -74,7 +74,7 @@ class EnglishAnalyzer() extends IAnalyzer {
                 val measure = OkapiBM25Measure(token.frequency.asInstanceOf[Byte], lexicon.WordsAdded)
                 DocTerm(token.ID, measure)
             })
-            AnalyzedDocument(doc.text, terms, doc.docMetadata)
+            AnalyzedDocument(terms)
         } finally { analyzerLock.readLock().unlock() }
     }
 

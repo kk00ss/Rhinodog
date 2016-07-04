@@ -23,7 +23,7 @@ class AnalyzedDocumentSerializerTest {
     def test() = {
         val measureSerializer = new OkapiBM25MeasureSerializer()
         val serializer = new DocumentSerializer(measureSerializer)
-        val doc = AnalyzedDocument("test test test",
+        val doc = AnalyzedDocument(
             Array(DocTerm(1,OkapiBM25Measure(1,100)), DocTerm(2, OkapiBM25Measure(2, 100)), DocTerm(3, OkapiBM25Measure(3, 100))))
         val serializedDoc = serializer.serialize(doc)
         val deserializedDoc = serializer.deserialize(serializedDoc)

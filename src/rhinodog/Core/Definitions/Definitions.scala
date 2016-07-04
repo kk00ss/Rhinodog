@@ -34,13 +34,10 @@ package object Definitions {
      measure: Measure)
 
     case class Document
-    (text: String,
-     docMetadata: mutable.Map[String, String] = mutable.Map[String, String]())
+    (text: String)
 
     case class AnalyzedDocument
-    (text: String,
-     terms: Seq[DocTerm],
-     docMetadata: mutable.Map[String, String] = mutable.Map[String, String]())
+    (terms: Seq[DocTerm])
 
     type SegmentSerialized = Array[Array[Int]]
 
@@ -101,9 +98,6 @@ package object Definitions {
             (totalNumber-numberOfDeleted)/numberOfDeleted
         else 1
     }
-
-    //withStorageLock, withTermWriterLock
-    type SaveChangesHook = ((Function0[Unit]) => Unit, (Function0[Unit]) => Unit) => Unit
 
     type DocumentSerialized = Array[Byte]
 

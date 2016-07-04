@@ -32,21 +32,7 @@ import rhinodog.Core.Utils._
 import scala.collection.immutable.{TreeSet, HashSet, TreeMap}
 import scala.collection.mutable.ArrayBuffer
 
-object PartialFlushWAL {
-    def deserialize(buf: ByteBuffer, length: Int): PartialFlushWAL = {
-        if (length % BlockKey.sizeInBytes != 0)
-            throw new IllegalStateException("buffer of wrong size")
-        val N = length / BlockKey.sizeInBytes
-        val keys = (1 to N).map(_ => BlockKey.deserialize(buf))
-        PartialFlushWAL(keys)
-    }
-}
-
-case class PartialFlushWAL(blockKeys: Seq[BlockKey]) {
-    def bytesRequired: Int = blockKeys.length * BlockKey.sizeInBytes
-
-    def serialize(buf: ByteBuffer) = blockKeys.foreach(_.serialize(buf))
-}
+import scala.collection.JavaConversions.{asScalaIterator, mapAsScalaMap}
 
 //TWO PHAZE COPACTION
 // new blocks are of different sizes and are of compaction level 0
@@ -57,6 +43,7 @@ case class PartialFlushWAL(blockKeys: Seq[BlockKey]) {
 class CompactionManager(dependencies: MainComponents) extends ICompactionManager {
     private val logger = LoggerFactory.getLogger(this.getClass)
     import GlobalConfig._
+
 
     //special key = Int.MaxValue for trees that are larger than maxCompactionSize / compactionFactor
     val compactionInfo = new ConcurrentHashMap[Int, TermCompactionInfo]()
@@ -151,7 +138,7 @@ class CompactionManager(dependencies: MainComponents) extends ICompactionManager
 
         logger.trace("BaseCompactionJob created for keys = {}", keys)
 
-        def computeChanges(): SaveChangesHook = {
+        def computeChanges(): Function0[Unit] = {
             val context = _computeChangesTimer.time()
             logger.debug("-> BaseCompactionJob.computeChanges created for keys = {}", keys)
             val blocks = baseComputeChanges(keys)
@@ -206,9 +193,8 @@ class CompactionManager(dependencies: MainComponents) extends ICompactionManager
 
 
         def getSyncSaveChangesHook(keys: Seq[BlockKey],
-                                   blocks: Seq[Definitions.BlockInfoRAM]): SaveChangesHook =
-            (withStorageLock: WithLockFunc, withTermWriterLock: WithLockFunc) =>
-                withStorageLock(() => withTermWriterLock(() => saveChangesSync(keys, blocks)))
+                                   blocks: Seq[Definitions.BlockInfoRAM]): Function0[Unit]
+        = () => saveChangesSync(keys, blocks)
 
         //NOT THREAD-SAFE SHOULD BE EXECUTED WITH STORAGE AND TERM-WRITER LOCKS
         //assumption is that keys is sorted as it was at the moment of scheduling
@@ -259,66 +245,6 @@ class CompactionManager(dependencies: MainComponents) extends ICompactionManager
             }
             logger.debug("BaseCompactionJob.keysConflictsDetection ->")
         }
-
-        //can save changes in multiply different LMDB transactions, using partialFlushWAL
-        def saveChangesAsync(keys: Seq[BlockKey], _blocks: Seq[Definitions.BlockInfoRAM]): SaveChangesHook =
-            (withStorageLock: WithLockFunc, withTermWriterLock: WithLockFunc) => {
-                val context = _saveChangesTimer.time()
-                logger.debug("BaseCompactionJob.saveChangesAsync for keys = {}", keys)
-                var blocks = _blocks
-                val metadatas = new ArrayBuffer[(BlockKey, BlockMetadata)]()
-                //async phase
-                //number of blocks to write in same run
-                val stepSize = merges_MaxSize.get() / pageSize
-                var keysForWAH = List[Array[Byte]]()
-                while (blocks.nonEmpty) {
-                    val blocksForStep = blocks.take(stepSize)
-                    val keysForStep = blocksForStep.map(_.key)
-                    val partialFlushWAH = PartialFlushWAL(keysForStep)
-                    withStorageLock(() => {
-                        withTermWriterLock(() => {
-                            val keyForWAH = dependencies.repository
-                                            .writePartialFlushWAL(partialFlushWAH)
-                            logger.trace("BaseCompactionJob.saveChangesAsync PartialFlushWAL key = {}," +
-                                " blockKeys ={}", Array(keyForWAH,keysForStep))
-                            keysForWAH ::= keyForWAH
-                            for (block <- blocksForStep) {
-                                val metaSerialized = serializer.serialize(block.meta)
-                                // unreferenced data will not affect query execution,
-                                // metadata would be reloaded on startup only if whole compaction
-                                // will be correctly stored, otherwise metadata and data will be deleted
-                                // due to PartialFlushWAL
-                                dependencies.repository
-                                    .saveBlock(block.key, block.data, metaSerialized)
-                                metadatas += ((block.key, block.meta))
-                            }
-                        })
-                    })
-                    blocks = blocks.drop(stepSize)
-                }
-                //sync phase
-                withStorageLock(() => {
-                    withTermWriterLock(() => {
-                        dependencies.repository
-                            .replaceBlocks(keys, List())
-                        dependencies.metadataManager
-                            .replaceMetadata(keys.head.termID, keys, metadatas)
-                        for (keyWAH <- keysForWAH)
-                            dependencies.repository.deletePartialFlushWAL(keyWAH)
-                        logger.trace("BaseCompactionJob.saveChangesAsync deleted WAL for partialFlushed blocks")
-                        //Saving compaction info about newly created blocks
-                        compactionInfo.putIfAbsent(termID, TermCompactionInfo())
-                        val termCompactionInfo = compactionInfo.get(termID)
-                        //removing dummy mark
-                        termCompactionInfo.levelOne -= keys.last
-                        blocks.foreach(block => {
-                            termCompactionInfo.levelOne += ((block.key, block.meta.fillFactor))
-                        })
-                        logger.trace("BaseCompactionJob.saveChangesAsync deleted WAL for partialFlushed blocks")
-                    })
-                })
-                context.stop()
-            }
     }
 
 }
