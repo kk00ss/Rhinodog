@@ -1,6 +1,7 @@
-# InvertedIndex
+# Rhinodog
 Implementation of inverted index on top of LMDB with some interesting optimizations. 
-Written for fun, work in progress. For understanding why this project was created see Main features section
+Written for fun, work in progress. (Rhinodog - from russian for strange creature "Смесь бульдога с носорогом")
+For understanding why this project was created see Main features section
 Implementation of inverted index on top of LMDB with some interesting optimizations. Written for fun, work in progress.
 
 ##Current state
