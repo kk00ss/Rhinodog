@@ -6,9 +6,14 @@ Implementation of inverted index on top of LMDB with some interesting optimizati
 ##Current state
 * readiness - Limited features, not 100% tests coverage. 
 * Unit and regression tests - work in progress. 
+<<<<<<< HEAD
 * Indexing performance -  on enwiki texs of size 569MB it takes 58 sec with Core i7 4790K and SSD Samsung 840 EVO, which is about 40GB/Hour, vs 26 for Lucene 6.0.0 with single commit to disk.
 * Querying performance - 2 times slower than Lucene on cold cache benchmark, 3 times slower when cached postings can be used (because there is no caching of decoded blocks yet).
 * Performance tests were only run on generated datasets, not real tests. But in-memory tests show that it is comparable with Lucene, and for some cases even faster. Educated guess would be - because Red-Black-Tree is faster than skip-lists. But it's hard to say for sure.
+=======
+* Indexing performance -  on enwiki texs of size 569MB it takes 50sec with Core i7 4790K and SSD Samsung 840 EVO, which is about 40GB/Hour, which is 50% of Lucene's indexing performance on my hardware. Lucene's English analyzer is used, and similar approach in general, but updating B-tree is quite slow (write speed in TaskManager are much smaller) and Rhinodog uses ConcurrentSkipList for TermHash which is slower than Lucene's TermHash. ConcurrentSkipList - will help in developing better NRT (Near Real Time) search. 
+* Performance tests - were run on generated documents and real tests. Results vary from 2-3 times slower than Lucene to same 2-3 times faster than Lucene. This difference depend on how do query terms correlate with each other, if they are common words that occur in almost every document - Lucene is faster, the larger the difference in term frequencies of query terms - the better it is for Rhinodog. Benchmarking code in main.scala describes the situation when query terms are very correlated.  Educated guess would be - because Red-Black-Tree is faster than skip-lists. But it's hard to say for sure.
+>>>>>>> origin/master
 
 ##Plans
 * Multifield documents support
