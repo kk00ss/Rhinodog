@@ -7,7 +7,7 @@ Implementation of inverted index on top of LMDB with some interesting optimizati
 ##Current state
 * readiness - Limited features, not 100% tests coverage. 
 * Unit and regression tests - work in progress. 
-* Indexing performance -  on enwiki texs of size 569MB it takes 50sec with Core i7 4790K and SSD Samsung 840 EVO, which is about 40GB/Hour, which is on par with Lucene (because Lucene's English analyzer is used, and similar approach in general)
+* Indexing performance -  on enwiki texs of size 569MB it takes 50sec with Core i7 4790K and SSD Samsung 840 EVO, which is about 40GB/Hour, which is 50% of Lucene's indexing performance on my hardware (because Lucene's English analyzer is used, and similar approach in general, but updating B-tree is quite slow)
 * Performance tests were only run on generated datasets, not real tests. But in-memory tests show that it is comparable with Lucene, and for some cases even faster. Educated guess would be - because Red-Black-Tree is faster than skip-lists. But it's hard to say for sure.
 
 ##Plans
@@ -30,11 +30,6 @@ Implementation of inverted index on top of LMDB with some interesting optimizati
 
         val ret = invertedIndex.getQueryEngine().executeQuery(topLevelIterator, 10)
 ```
-
-##Current state
-* readiness - guts outside, but components seem ready
-* tests - work in progress, main.scala contains correctness and performance tests for in-memory search which is close to Lucene. (Updated - with no warm up after index opening current implementation of InvertedIndex might be on par or faster, because of faster warmup)
-
 
 ##Main features:
 *  Use LMDB transaction to maintain consistant state of an index. So it will be hard to break it, or lose data.
