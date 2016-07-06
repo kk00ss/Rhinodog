@@ -13,20 +13,32 @@
 // limitations under the License.
 package rhinodog.Run
 
+import java.nio.file.{Paths, Path}
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
+import org.apache.lucene.analysis.en
+import org.apache.lucene.analysis.util.CharArraySet
+import org.apache.lucene.document.{TextField, Field}
+import org.apache.lucene.index.{DirectoryReader, IndexWriter, IndexWriterConfig}
+import org.apache.lucene.queryparser.classic.QueryParser
+import org.apache.lucene.search.IndexSearcher
+import org.apache.lucene.store._
+import org.slf4j.LoggerFactory
 import rhinodog.Analysis.EnglishAnalyzer
 import rhinodog.Core.Definitions.Configuration.storageModeEnum
 import rhinodog.Core.Definitions.Document
-import rhinodog.Core.{TermToken, InvertedIndex}
+import rhinodog.Core.Iterators.IteratorAND
+import rhinodog.Core.{ORClause, ANDClause, TermToken, InvertedIndex}
 import rhinodog.Core.MeasureFormats.{OkapiBM25MeasureSerializer, OkapiBM25Measure}
+import scala.collection.JavaConverters._
 
 import info.bliki.wiki.dump.IArticleFilter
 import info.bliki.wiki.dump.Siteinfo
 import info.bliki.wiki.dump.WikiArticle
 import info.bliki.wiki.dump.WikiXMLParser
 import java.io._
-
+import sun.nio.fs._
 
 import scala.collection._
 
@@ -36,21 +48,74 @@ object main {
         new EnglishAnalyzer(),
         storageModeEnum.READ_WRITE)
 
+    val logger = LoggerFactory.getLogger(this.getClass)
+
+    val directory = new MMapDirectory(Paths.get("Lucene"))
+    val stopList = scala.io.Source.fromFile("stopWordsList.txt")
+        .getLines().toSeq.asJava
+    val charArraySet = new CharArraySet(stopList, true)
+    val analyzer = new en.EnglishAnalyzer(charArraySet)
+    val luceneConfig = new IndexWriterConfig(analyzer)
+    val iwriter = new IndexWriter(directory, luceneConfig)
+    val ireader = DirectoryReader.open(directory)
+    val isearcher = new IndexSearcher(ireader)
+    val parser = new QueryParser("fieldname", analyzer)
+
     def main(args: Array[String]): Unit = {
 
-                val folder = new File("WikiText")
-                folder.listFiles().par.foreach(file =>  {
-                    val text = scala.io.Source.fromFile(file).mkString
-                    val ID = invertedIndex.addDocument(Document(text))
-                })
 
-//        val topLevelIterator = invertedIndex
-//            .getQueryEngine()
-//            .buildTopLevelIterator(TermToken("clock"))
-//
-//        val ret = invertedIndex.getQueryEngine().executeQuery(topLevelIterator, 10)
+//        val folder = new File("WikiText")
+//        logger.info("starting")
+//        folder.listFiles().par.foreach(file => {
+//            val text = scala.io.Source.fromFile(file).mkString
+//            val ID = invertedIndex.addDocument(Document(text))
+////            val doc = new org.apache.lucene.document.Document()
+////            doc.add(new Field("fieldname", text, TextField.TYPE_STORED))
+////            iwriter.addDocument(doc)
+//        })
 
+        //        val topLevelIterator = invertedIndex
+        //            .getQueryEngine()
+        //            .buildTopLevelIterator(TermToken("clock"))
+        //
+        //        val ret = invertedIndex.getQueryEngine().executeQuery(topLevelIterator, 10)
+
+        val mostFrequentTerms = invertedIndex
+            ._mainComponents
+            .metadataManager
+            .getMostFrequentTerms(1000)
+            .map(termID => invertedIndex._mainComponents.repository.getTerm(termID))
+
+        val K = 10
+        println("press Enter to start benchmark")
+        scala.io.StdIn.readLine()
+
+        val start = System.currentTimeMillis()
+        for(i <- 0 until mostFrequentTerms.length - 1)
+            //for(j <- i+1 until mostFrequentTerms.length)
+            {
+            val andClause = new ORClause(Array(TermToken(mostFrequentTerms(i)), TermToken(mostFrequentTerms(i+1))))
+            val topLevelIterator = invertedIndex
+                .getQueryEngine()
+                .buildTopLevelIterator(andClause)
+            val ret = invertedIndex.getQueryEngine().executeQuery(topLevelIterator, K)
+        }
+        val time = System.currentTimeMillis() - start
+        logger.info("Rhinodog search took {} ms", time)
+
+        val start1 = System.currentTimeMillis()
+        for(i <- 0 until mostFrequentTerms.length - 1)
+            //for(j <- i+1 until mostFrequentTerms.length)
+            {
+            val query = parser.parse(mostFrequentTerms(i) +" "+mostFrequentTerms(i+1))
+            val hits = isearcher.search(query, K).scoreDocs
+        }
+        val time1 = System.currentTimeMillis() - start1
+        logger.info("Lucene search took {} ms", time1)
+
+        logger.info("closing")
         invertedIndex.close()
+        directory.close()
 
         println()
     }

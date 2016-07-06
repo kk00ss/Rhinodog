@@ -104,11 +104,11 @@ class CompactionManager(dependencies: MainComponents) extends ICompactionManager
                 .iteratorFrom(key)
                 .takeWhile(_._2 < fillFactorThreshold)
                 .map(_._1)
-            val estimatedCompactionSize = keys.length * pageSize
+            val estimatedCompactionSize = keys.length * storage_pageSize
             if (estimatedCompactionSize >= merges_minSize.get()) {
                 logger.trace("docDeletedEvent estimatedCompactionSize >= merges_minSzie = {}",
                                 estimatedCompactionSize)
-                val nBlocks = merges_MaxSize.get() / pageSize
+                val nBlocks = merges_maxSize.get() / storage_pageSize
                 val keysToCompact = keys.take(nBlocks).toSeq
                 val compactionJob = BaseCompactionJob(key.termID,
                                                       keysToCompact,
@@ -185,7 +185,7 @@ class CompactionManager(dependencies: MainComponents) extends ICompactionManager
             logger.trace("-> BaseCompactionJob.partitionIntoBlocks")
             val blocksManager = new BlocksWriter(dependencies.measureSerializer,
                                                  termID,
-                                                 targetBlockSize)
+                                                 storage_targetBlockSize)
             for (posting <- data)
                 blocksManager.add(posting)
             blocksManager.flushBlocks().values.toSeq
@@ -210,7 +210,7 @@ class CompactionManager(dependencies: MainComponents) extends ICompactionManager
             dependencies.metadataManager.replaceMetadata(keys.head.termID, keys, blocksMetas)
             if(sourceLevelIsZero) _totalZeroLevelSize.dec(estimatedCompactionSize)
             else _totalLevelOneSize.dec(estimatedCompactionSize)
-            _totalLevelOneSize.inc(blocks.size * pageSize)
+            _totalLevelOneSize.inc(blocks.size * storage_pageSize)
             //Saving compaction info about newly created blocks
             compactionInfo.putIfAbsent(termID, TermCompactionInfo())
             val termCompactionInfo = compactionInfo.get(termID)

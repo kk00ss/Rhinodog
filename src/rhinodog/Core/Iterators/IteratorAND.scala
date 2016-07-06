@@ -111,27 +111,34 @@ class IteratorAND(components: Seq[ITermIterator],
         ret
     }
 
-    //either readSegmentMeta or nextBlock was called on component iterator with this index
-    var movedComponents = ArrayBuffer[ITermIterator]()
+    // nextSegmentMeta was called on component iterators
+    var movedSegments = ArrayBuffer[ITermIterator]()
+
+    // nextBlock was called on component iterators
+    var movedBlocks = ArrayBuffer[ITermIterator]()
 
     def nextBlock() = {
         val componentToMove = components.minBy(_.blockMaxDocID)
-        componentToMove.nextBlock()
-        componentToMove.nextSegmentMeta()
-        if (!movedComponents.contains(componentToMove))
-            movedComponents += componentToMove
+        if(componentToMove.hasNextBlock) {
+            componentToMove.nextBlock()
+            componentToMove.nextSegmentMeta()
+            if (!movedBlocks.contains(componentToMove))
+                movedBlocks += componentToMove
+        } else _currentDocID = -1
     }
 
     def nextSegmentMeta() = {
         val componentToMove = components.minBy(_.segmentMaxDocID)
-        componentToMove.nextSegmentMeta()
-        if (!movedComponents.contains(componentToMove))
-            movedComponents += componentToMove
+        if(componentToMove.hasNextSegment) {
+            componentToMove.nextSegmentMeta()
+            if (!movedSegments.contains(componentToMove))
+                movedSegments += componentToMove
+        } else _currentDocID = -1
     }
 
     def initSegmentIterator() = {
-        movedComponents.foreach(_.initSegmentIterator())
-        movedComponents.clear()
+        movedSegments.foreach(_.initSegmentIterator())
+        movedSegments.clear()
     }
 
     def advanceToScore(targetScore: Float): Long = {
@@ -141,10 +148,11 @@ class IteratorAND(components: Seq[ITermIterator],
         while (currentScore < targetScore && hasNext) {
             positionChanged = true
             var blockChanged = false
-            while ((targetScore > blockMaxScore) && hasNextBlock) {
+            while (hasNextBlock &&
+                ( (targetScore > blockMaxScore)
+                    || (!hasNextSegment && segmentMaxScore < targetScore) )) {
                 nextBlock()
                 blockChanged = true
-                println("block skip")
             }
             if (blockChanged)
                 nextSegmentMeta()
@@ -152,7 +160,6 @@ class IteratorAND(components: Seq[ITermIterator],
             while ((targetScore > segmentMaxScore) && hasNextSegment) {
                 nextSegmentMeta()
                 segmentChanged = true
-                println("segment skip")
             }
             if (segmentChanged || blockChanged)
                 initSegmentIterator()
@@ -180,7 +187,6 @@ class IteratorAND(components: Seq[ITermIterator],
     def advance(targetDocID: Long): Long = {
         if (hasNext && targetDocID > _currentDocID) {
             components.foreach(_.advance(targetDocID))
-            //println("advance - docID - andIterator")
             positionChanged = true
             levelIterators()
         }

@@ -43,22 +43,31 @@ object Configuration {
 
     object GlobalConfig {
         val propFactory = DynamicPropertyFactory.getInstance()
+        // enables flushing timer,
+        // otherwise only manual flushing or closing an index will commit changes
+        def storage_autoFlush = propFactory.getBooleanProperty("storage.autoFlush", true).get()
+        // interval in seconds
+        // converted to milliseconds
+        def storage_flushInterval = propFactory.getLongProperty("storage.flushInterval", 30).get() * 1000
+        // time to wait for running queries to complete before closing the index
+        def storage_waitOnClose = propFactory.getLongProperty("storage.waitOnClose", 1000).get()
+        // set to number of cores on your machine,
+        // Sets the number of termsDocsHashes that will be created and
+        // number of threads that will be used for encoding of postings at flush
+        // larger number speeds up flushing process
+        def global_numCores = propFactory.getIntProperty("global.numCores", 4).get()
+        // influences disk IO granularity, 4KB - better caching, larger blocks -
+        // (at the size of your SSD block) - faster IO
+        def storage_pageSize = propFactory.getIntProperty("storage.pageSize", 4*KB).get()
+        def storage_targetBlockSize: Int = storage_pageSize - 16 // should always be pageSize - 16
+        //LMDB folder will be path + '\'+"InvertedIndex"
+        def storage_path = propFactory.getStringProperty("storage.path","storageFolder").get()
+        //storage space is acquired in chunks of this size
+        def storage_sizeIncreaseStep = propFactory.getLongProperty("storage.sizeIncreaseStep", 4*GB)
         // number of docIDs for which there will be single bitmap segment
         // smaller value means less efficient encoding, but less data to write on change
-        def bitSetSegmentRange = propFactory.getIntProperty("bitSetSegmentRange", Short.MaxValue).get()
-        def autoFlush = propFactory.getBooleanProperty("autoFlush", true).get()
-        //interval in milliseconds
-        def flushInterval = propFactory.getLongProperty("flushInterval", 10*1000).get()
-        //number of small flushes per one large flush
-        def pageSize = propFactory.getIntProperty("pageSize", 64*KB).get()
-        def targetBlockSize: Int = pageSize - 16 // should always be pageSize - 16
-        //LMDB folder will be path + '\'+"InvertedIndex"
-        def path = propFactory.getStringProperty("path","storageFolder").get()
-        //storage space is acquired in chunks of this size
-        def mapSizeIncreaseStep = propFactory.getLongProperty("mapSizeIncreaseStep", 4*GB)
-        //since compaction should be all small, it's unclear for now which value is better
-        def merges_maxConcurrent = propFactory.getIntProperty("merges.maxConcurrent", 4)
-        //blockSize: Int = 256 * KB - 16, //don't need it because of partial reads
+        def storage_bitSetSegmentRange = propFactory
+            .getIntProperty("storage.bitSetSegmentRange", Short.MaxValue).get()
         //delay in ms - we need it to decouple compactions from analysis threads
         def merges_queueCheckInterval = propFactory.getLongProperty("merges.queueCheckInterval", 100)
         //async compactions will not start if the system CPU load is more than this
@@ -80,12 +89,10 @@ object Configuration {
         // because the later may contain many merges
         // single commit size is not restricted for now
         // same size for both means that merge will be triggered after reaching the threshold
-        def merges_MaxSize = propFactory.getIntProperty("merges.minSize", 4 * MB)
+        def merges_maxSize = propFactory.getIntProperty("merges.maxSize", 4 * MB)
         // ==== MONITORING
         //Enable Slf4jReporter reporter for metrics
         def metrics_slf4j = propFactory.getBooleanProperty("metrics.slf4j", true).get()
-        //Enable ConsoleReporter reporter for metrics
-        def metrics_console = propFactory.getBooleanProperty("metrics.console", false).get()
         //Enable JMXReporter reporter for metrics
         def metrics_jmx = propFactory.getBooleanProperty("metrics.jmx", true).get()
         // True = seconds - false = Minutes

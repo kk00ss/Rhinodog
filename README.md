@@ -1,13 +1,13 @@
-# Rhinodog
+# InvertedIndex
 Implementation of inverted index on top of LMDB with some interesting optimizations. 
-Written for fun, work in progress. (Rhinodog - from russian for strange creature "Смесь бульдога с носорогом")
-For understanding why this project was created see Main features section
+Written for fun, work in progress. For understanding why this project was created see Main features section
 Implementation of inverted index on top of LMDB with some interesting optimizations. Written for fun, work in progress.
 
 ##Current state
 * readiness - Limited features, not 100% tests coverage. 
 * Unit and regression tests - work in progress. 
-* Indexing performance -  on enwiki texs of size 569MB it takes 50sec with Core i7 4790K and SSD Samsung 840 EVO, which is about 40GB/Hour, which is on par with Lucene (because Lucene's English analyzer is used, and similar approach in general)
+* Indexing performance -  on enwiki texs of size 569MB it takes 58 sec with Core i7 4790K and SSD Samsung 840 EVO, which is about 40GB/Hour, vs 26 for Lucene 6.0.0 with single commit to disk.
+* Querying performance - 2 times slower than Lucene on cold cache benchmark, 3 times slower when cached postings can be used (because there is no caching of decoded blocks yet).
 * Performance tests were only run on generated datasets, not real tests. But in-memory tests show that it is comparable with Lucene, and for some cases even faster. Educated guess would be - because Red-Black-Tree is faster than skip-lists. But it's hard to say for sure.
 
 ##Plans
@@ -30,11 +30,6 @@ Implementation of inverted index on top of LMDB with some interesting optimizati
 
         val ret = invertedIndex.getQueryEngine().executeQuery(topLevelIterator, 10)
 ```
-
-##Current state
-* readiness - guts outside, but components seem ready
-* tests - work in progress, main.scala contains correctness and performance tests for in-memory search which is close to Lucene. (Updated - with no warm up after index opening current implementation of InvertedIndex might be on par or faster, because of faster warmup)
-
 
 ##Main features:
 *  Use LMDB transaction to maintain consistant state of an index. So it will be hard to break it, or lose data.

@@ -64,6 +64,11 @@ case class MetadataManager(measureSerializer: MeasureSerializerBase)
         ret
     }
 
+    override def getMostFrequentTerms(num: Int): Array[Int] =
+        metadataByTerm.toArray
+            .sortWith(_._2.numberOfDocs > _._2.numberOfDocs)
+            .map(_._1)
+            .take(num)
 
     private val restoreNodeMetadata =
         (key: BlockKey, buffer: ByteBuffer) => {
@@ -111,8 +116,8 @@ case class MetadataManager(measureSerializer: MeasureSerializerBase)
     //========== METADATA MANAGEMENT ===================================================
     /* returns key: Long, docIDinRange: Int */
     private def bitSetSegmentKey(docID: Long): (Long, Int) = {
-        val key = docID / GlobalConfig.bitSetSegmentRange
-        val docIDinRange = (docID % GlobalConfig.bitSetSegmentRange).asInstanceOf[Int]
+        val key = docID / GlobalConfig.storage_bitSetSegmentRange
+        val docIDinRange = (docID % GlobalConfig.storage_bitSetSegmentRange).asInstanceOf[Int]
         logger.trace("bitSetSegmentKey docID = {}, key = {}, docIDinRange = {}",
             Array(docID,key,docIDinRange))
         return (key, docIDinRange)

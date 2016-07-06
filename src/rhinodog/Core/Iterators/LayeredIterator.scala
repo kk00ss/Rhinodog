@@ -59,26 +59,50 @@ class LayeredIterator(layers: Seq[ITermIterator]) extends ITermIterator {
 
     def segmentMaxScore: Float = layers.maxBy(_.segmentMaxScore).segmentMaxScore
 
-    var movedComponents = ArrayBuffer[ITermIterator]()
+    // nextSegmentMeta was called on component iterators
+    var movedSegments = ArrayBuffer[ITermIterator]()
+
+    // nextBlock was called on component iterators
+    var movedBlocks = ArrayBuffer[ITermIterator]()
 
     def nextBlock() = {
-        val componentToMove = layers.minBy(_.blockMaxDocID)
-        componentToMove.nextBlock()
-        componentToMove.nextSegmentMeta()
-        if (!movedComponents.contains(componentToMove))
-            movedComponents += componentToMove
+        var tmp = layers.sortBy(_.blockMaxDocID)
+        var moved = false
+        while (!moved && tmp.nonEmpty) {
+            val componentToMove = tmp.head
+            if (componentToMove.hasNextBlock) {
+                componentToMove.nextBlock()
+                componentToMove.nextSegmentMeta()
+                if (!movedBlocks.contains(componentToMove))
+                    movedBlocks += componentToMove
+                moved = true
+            } else {
+                tmp = tmp.tail
+            }
+        }
+        if(!moved) _currentDocID = -1
     }
 
     def nextSegmentMeta() = {
-        val componentToMove = layers.minBy(_.segmentMaxDocID)
-        componentToMove.nextSegmentMeta()
-        if (!movedComponents.contains(componentToMove))
-            movedComponents += componentToMove
+        var tmp = layers.sortBy(_.segmentMaxDocID)
+        var moved = false
+        while (!moved && tmp.nonEmpty) {
+            val componentToMove = tmp.head
+            if (componentToMove.hasNextSegment) {
+                componentToMove.nextSegmentMeta()
+                if (!movedSegments.contains(componentToMove))
+                    movedSegments += componentToMove
+                moved = true
+            } else {
+                tmp = tmp.tail
+            }
+        }
+        if(!moved) _currentDocID = -1
     }
 
     def initSegmentIterator() = {
-        movedComponents.foreach(_.initSegmentIterator())
-        movedComponents.clear()
+        movedSegments.foreach(_.initSegmentIterator())
+        movedSegments.clear()
     }
 
     def advanceToScore(targetScore: Float): Long = {

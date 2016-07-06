@@ -39,8 +39,14 @@ class Storage
     private val logger = LoggerFactory.getLogger(this.getClass)
     import mainComponents._
 
-    val termsDocsHash
-    = new TermsDocsHash(TermsDocsHashConfig(mainComponents,GlobalConfig.targetBlockSize))
+//    val termsDocsHash
+//    = new TermsDocsHash(TermsDocsHashConfig(mainComponents,GlobalConfig.index_targetBlockSize))
+    val numCores = GlobalConfig.global_numCores
+    val termsDocsHashes = new Array[TermsDocsHash](numCores)
+    val termsDocsHashConfig = TermsDocsHashConfig(mainComponents,
+                                                  GlobalConfig.storage_targetBlockSize)
+    for(i <- 0 until numCores)
+        termsDocsHashes(i) = new TermsDocsHash(termsDocsHashConfig)
 
     @volatile
     private var isOpen = true
@@ -81,7 +87,7 @@ class Storage
     timer.schedule(new TimerTask { override def run() = {
         if(isOpen && operatingSystemMXBean.getSystemCpuLoad <= GlobalConfig.merges_cpuLoadThreshold.get()) {
             while(isOpen && scheduledCompactions.nonEmpty &&
-                compactionsRunning.get() < GlobalConfig.merges_maxConcurrent.get()) {
+                compactionsRunning.get() < GlobalConfig.global_numCores) {
                 //starting new compaction
                 Future {
                     logger.info("timerTask starting new compaction")
@@ -114,7 +120,7 @@ class Storage
     }}, GlobalConfig.merges_queueCheckInterval.get(),
         GlobalConfig.merges_queueCheckInterval.get())
 
-    if(GlobalConfig.autoFlush) {
+    if(GlobalConfig.storage_autoFlush) {
         timer.schedule(new TimerTask {
             override def run(): Unit = if (isOpen) {
                 if (docIDCounter.get() > lastDocIDFlushed) {
@@ -122,8 +128,8 @@ class Storage
                         flush()
                  }
             }
-        }, GlobalConfig.flushInterval,
-            GlobalConfig.flushInterval)
+        }, GlobalConfig.storage_flushInterval,
+            GlobalConfig.storage_flushInterval)
     }
 
 
@@ -143,7 +149,8 @@ class Storage
             currentDocID = docIDCounter.incrementAndGet()
             val context = _addDocumentTimer.time()
             document.terms.foreach(docTerm => {
-                termsDocsHash.addDocument (currentDocID, docTerm)
+                val hashIndex = docTerm.termID % numCores
+                termsDocsHashes(hashIndex).addDocument (currentDocID, docTerm)
             })
             val docSerialized = docSerializer.serialize(document)
             repository.addDocument(currentDocID, docSerialized)
@@ -196,9 +203,9 @@ class Storage
             exclusiveLock.lock()
         try {
             val context = _flushTimer.time()
-            termsDocsHash.flush(exclusiveLock)
-            if(exclusiveLock.isHeldByCurrentThread)
-                exclusiveLock.unlock()
+            termsDocsHashes.foreach(_.rotateWriteLog())
+            exclusiveLock.unlock()
+            termsDocsHashes.par.foreach(_.flush())
             flushInProgressLock.lock()
             val metadataToFlush = metadataManager.flush
             repository.flush(docIDCounter.get(),
@@ -206,6 +213,8 @@ class Storage
                 flushInProgressLock,
                 metadataToFlush)
             context.stop()
+        } catch {
+            case ex: Exception => logger.error("!!! flush failed ",ex)
         } finally {
             if(!wasAlreadyLocked  && exclusiveLock.isHeldByCurrentThread)
                 exclusiveLock.unlock()

@@ -37,7 +37,7 @@ class InvertedIndex
     // должны быть проанализированны в том же flush / transaction)
     private val sharedExclusiveLock = new ReentrantReadWriteLock(true)
     private var storage: Storage = null
-    private var _mainComponents: MainComponents = null
+    var _mainComponents: MainComponents = null
     private var queryEnginge: QueryEngine = null
 
     val metrics = new MetricRegistry()
@@ -82,13 +82,6 @@ class InvertedIndex
                     .convertDurationsTo(TimeUnit.MILLISECONDS)
                     .build()
                 slf4jReporter.start(reportingInterval, TimeUnit.SECONDS)
-            }
-            if (GlobalConfig.metrics_console) {
-                val consoleReporter = ConsoleReporter.forRegistry(metrics)
-                    .convertRatesTo(rateTimeUnit)
-                    .convertDurationsTo(TimeUnit.MILLISECONDS)
-                    .build()
-                consoleReporter.start(reportingInterval, TimeUnit.SECONDS)
             }
             if (GlobalConfig.metrics_jmx) {
                 val jmxReporter = JmxReporter.forRegistry(metrics)

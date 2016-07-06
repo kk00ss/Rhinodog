@@ -24,7 +24,7 @@ import scala.collection._
 
 class BlocksWriter
 (measureSerializer: MeasureSerializerBase,
- termID: Int = 0,
+ var termID: Int = 0,
  blockTargetSize: Int = 4 * 1024 - 16) {
     private val logger = LoggerFactory.getLogger(this.getClass)
 
@@ -38,6 +38,14 @@ class BlocksWriter
     var currentBlocksSegments = List[Segment]()
 
     var blocks = new TreeMap[Long, BlockInfoRAM]()
+
+    def reset(newTermID: Int): Unit = {
+        this.termID = newTermID
+        segmentBuffer.clear()
+        prevDocID = 0l
+        currentBlockEstimatedSize = 0
+        blocks = new TreeMap[Long, BlockInfoRAM]()
+    }
 
     def add(docPosting: DocPosting): Unit = {
         logger.trace("add segmentBuffer.length = {}",segmentBuffer.length)

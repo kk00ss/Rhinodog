@@ -133,6 +133,8 @@ class BlocksIterator
                 //it will make currentDocID of it == -1
                 segmentIterator.next()
             } else {
+                if(blockBuffer.remaining() < 8)
+                    println()
                 nextSegmentMeta()
                 initSegmentIterator()
             }
@@ -149,7 +151,6 @@ class BlocksIterator
             while ((targetScore > _blockMaxScore || blockBuffer.remaining() == 0)  &&
                 metaIterator.hasNext) {
                 nextBlock()
-                //println("block skip - score - blockIterator")
                 blockChanged = true
             }
             if (blockChanged)
@@ -159,7 +160,6 @@ class BlocksIterator
             while ((targetScore > _segmentMaxScore || segmentIterator.currentDocID == -1) &&
                 blockBuffer.remaining() > segmentSkip) {
                 nextSegmentMeta()
-                //println("segment skip - score - blockIterator")
                 segmentChanged = true
             }
             if (segmentChanged || blockChanged)
@@ -181,10 +181,12 @@ class BlocksIterator
         while (targetDocID > _blockMaxDocID &&  metaIterator.hasNext) {
             metaIterator.advance(targetDocID)
             block = metaIterator.currentElement
-            blockBuffer = ByteBuffer.wrap(block._2.data)
-            _blockMaxDocID = block._1
-            _blockMaxScore = block._2.maxMeasure.score * IDF
-            blockChanged = true
+            if(block._1 != -1) {
+                blockBuffer = ByteBuffer.wrap(block._2.data)
+                _blockMaxDocID = block._1
+                _blockMaxScore = block._2.maxMeasure.score * IDF
+                blockChanged = true
+            }
         }
         if(blockChanged)
             nextSegmentMeta()

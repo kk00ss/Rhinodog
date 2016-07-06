@@ -66,10 +66,10 @@ class MetaIterator
     }
     def advance(docID: Long): Long = {
         iterator = meta.blocks.iteratorFrom(BlockKey(termID,docID))
-        val (blockKey, blockMeta) = iterator.next()
-        if(iterator.hasNext)
-            currentElement = (blockKey.maxDocID, BlockInfo(blockKey,blockMeta,snapshot))
-        else currentElement = (-1, null)
+        if(iterator.hasNext) {
+            val (blockKey, blockMeta) = iterator.next()
+            currentElement = (blockKey.maxDocID, BlockInfo(blockKey, blockMeta, snapshot))
+        } else currentElement = (-1, null)
         return currentElement._1
     }
     def close() = { snapshot.close() }

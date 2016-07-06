@@ -19,7 +19,9 @@ object Caching {
 
     case class BlockCache(key: BlockKey,
                           block: BlockDataSerialized,
-                          metadata: BlockMetadataSerialized)
+                          metadata: BlockMetadataSerialized) extends Ordered[BlockCache] {
+        def compare(that: BlockCache) = this.key.compare(that.key)
+    }
 
     case class DocsChangesCache
     (addedDocuments: ConcurrentSkipListMap[Long, DocumentSerialized],
@@ -27,20 +29,17 @@ object Caching {
         def this() = this(new ConcurrentSkipListMap(), new ConcurrentSkipListSet())
     }
     case class WriteCache
-    (addedBlocks: ConcurrentSkipListMap[BlockKey, BlockDataSerialized],
-     addedMeta: ConcurrentSkipListMap[BlockKey, BlockMetadataSerialized],
+    (addedBlocks: ConcurrentSkipListMap[BlockKey, (BlockDataSerialized, BlockMetadataSerialized)],
      newTerms: ConcurrentHashMap[String, Int],
+     newTermsByID: ConcurrentHashMap[Int, String],
      deletedBlocks: ConcurrentSkipListSet[BlockKey],
-     docs: DocsChangesCache,
-     partialFlushInfosToAdd: ConcurrentSkipListMap[Array[Byte], Array[Byte]],
-     partialFlushInfosToDELETE: ConcurrentLinkedQueue[Array[Byte]]) {
+     docs: DocsChangesCache) {
         def this() = this(
-            new ConcurrentSkipListMap[BlockKey, BlockDataSerialized](),
-            new ConcurrentSkipListMap[BlockKey, BlockMetadataSerialized](),
+            new ConcurrentSkipListMap[BlockKey,
+                        (BlockDataSerialized, BlockMetadataSerialized)](),
             new ConcurrentHashMap[String, Int](),
+            new ConcurrentHashMap[Int, String],
             new ConcurrentSkipListSet[BlockKey](),
-            new DocsChangesCache(),
-            new ConcurrentSkipListMap[Array[Byte], Array[Byte]],
-            new ConcurrentLinkedQueue[Array[Byte]]())
+            new DocsChangesCache())
     }
 }

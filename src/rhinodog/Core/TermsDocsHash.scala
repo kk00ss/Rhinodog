@@ -21,8 +21,6 @@ import Configuration._
 import org.slf4j.LoggerFactory
 import rhinodog.Core.Utils._
 
-import scala.collection._
-
 import scala.collection.JavaConversions.mapAsScalaMap
 
 case class TermKey(termID:Int, maxDocID: Long) extends Ordered[TermKey] {
@@ -40,6 +38,7 @@ class TermsDocsHash
 
     val serializer = MetadataSerializer(mainComponents.measureSerializer)
     private var writeCache = new ConcurrentSkipListMap[TermKey, Measure]()
+    private var dataBeingFlushed: ConcurrentSkipListMap[TermKey, Measure] = null
 
     private val flushTimer = mainComponents.metrics.timer("TermsDocsHash - flushTimer")
 
@@ -50,38 +49,52 @@ class TermsDocsHash
         return true
     }
 
-    def flush(exclusiveLock:  ReentrantReadWriteLock.WriteLock) = {
+    def rotateWriteLog() = {
+        if(writeCache.size() > 0) {
+            dataBeingFlushed = writeCache
+            writeCache = new ConcurrentSkipListMap[TermKey, Measure]()
+        }
+    }
+
+    def flush() = {
         val context = flushTimer.time()
         val start = System.currentTimeMillis()
-        if (writeCache.size() > 0) {
-            val data = writeCache
-            writeCache = new ConcurrentSkipListMap[TermKey, Measure]()
-            if(exclusiveLock != null && exclusiveLock.isHeldByCurrentThread)
-                exclusiveLock.unlock()
-            var currentTermID = data.headOption.get._1.termID
-            var blocksManager = new BlocksWriter(mainComponents.measureSerializer,
+        if (dataBeingFlushed != null && dataBeingFlushed.size() > 0) {
+            var currentTermID = dataBeingFlushed.headOption.get._1.termID
+            val blocksManager = new BlocksWriter(mainComponents.measureSerializer,
                 currentTermID,
                 config.targetSize)
-
-            data.foreach(entry => {
+            //val futures = mutable.ArrayBuffer[Future[Boolean]]()
+            dataBeingFlushed.foreach(entry => {
                 if (currentTermID != entry._1.termID) {
                     //flush blocksManager content
-                    val blocks = blocksManager.flushBlocks().values
-                    for (block <- blocks) {
-                        val key = block.key
-                        val metaSerialized = serializer.serialize(block.meta)
-                        mainComponents.repository.saveBlock(key, block.data, metaSerialized)
-                        mainComponents.metadataManager.addMetadata(key, block.meta)
-                    }
-                    //reinit blocksManager
+                    val tmpBlocksManager = blocksManager
+                    //futures += Future[Boolean] {
+                        try {
+                            val blocks = tmpBlocksManager.flushBlocks().values
+                            for (block <- blocks) {
+                                val key = block.key
+                                val metaSerialized = serializer.serialize(block.meta)
+                                mainComponents.repository.saveBlock(key, block.data, metaSerialized)
+                                mainComponents.metadataManager.addMetadata(key, block.meta)
+                            }
+                            //true
+                        } catch {
+                            case e: Exception => logger.error("!!! flush future",e)
+                            //false
+                        }
+                    //}
+                    //re-init blocksManager
                     currentTermID = entry._1.termID
-                    blocksManager = new BlocksWriter(mainComponents.measureSerializer,
-                        currentTermID,
-                        config.targetSize)
+//                    blocksManager = new BlocksWriter(mainComponents.measureSerializer,
+//                        currentTermID,
+//                        config.targetSize)
+                    blocksManager.reset(currentTermID)
                 }
                 blocksManager.add(new DocPosting(entry._1.maxDocID, entry._2))
             })
-
+            //Await.ready(Future.sequence(futures), Duration.Inf)
+            dataBeingFlushed = null
         }
         val time = System.currentTimeMillis() - start
         logger.info("TermsDocsHash flush took {} ms",time)
