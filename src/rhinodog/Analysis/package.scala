@@ -41,7 +41,7 @@ package object Analysis {
 
         def addWord(rootForm: String): Int = {
             var ret = -1
-            if(rootForm.length > 1) {
+            if(rootForm.length > 1 && rootForm.length < 128) {
                 wordsAdded += 1
                 val previous = root2TokenInfo.get(rootForm)
                 if (previous.isDefined) {

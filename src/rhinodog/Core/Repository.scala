@@ -69,6 +69,10 @@ class Repository(storageMode: storageModeEnum.storageMode,
 
     def getMaxDocID: Long = max_Flushed_DocID.get()
 
+    @volatile
+    private var totalDocsCount = 0l
+    def getTotalDocsCount: Long = totalDocsCount
+
     private val atomicMAX = new LongBinaryOperator {
         override def applyAsLong(oldV: Long, newV: Long): Long = if (newV > oldV) newV else oldV
     }
@@ -135,6 +139,8 @@ class Repository(storageMode: storageModeEnum.storageMode,
         var tmpResult = this.indexStatistics_DB.get("totalDocsCount".getBytes)
         this.totalDocsCount = if (tmpResult == null) 0
         else ByteBuffer.wrap(tmpResult).getLong
+        max_Flushed_DocID.set(totalDocsCount)
+
         logger.info("openEnvironment totalDocsCount = {}", totalDocsCount)
         tmpResult = this.indexStatistics_DB.get("nextTermID".getBytes)
         val nextTermIDtmp = if (tmpResult == null) 0 else ByteBuffer.wrap(tmpResult).getInt
@@ -186,11 +192,6 @@ class Repository(storageMode: storageModeEnum.storageMode,
         }
         logger.info("closeEnvironment ->")
     }
-
-
-    private var totalDocsCount = 0l
-
-    def getTotalDocsCount: Long = totalDocsCount
 
     //GlobalLexicon section
     val termIDLock = new ReentrantLock()
@@ -451,6 +452,8 @@ class Repository(storageMode: storageModeEnum.storageMode,
         exclusiveLock.lock()
         flushInProgressLock.lock()
         try {
+            if(newTotalDocsCount < this.totalDocsCount)
+                throw new IllegalArgumentException("wrong totalDocsCount")
             this.totalDocsCount = newTotalDocsCount
             if (storageLock != null && storageLock.isHeldByCurrentThread)
                 storageLock.unlock()

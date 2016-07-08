@@ -86,7 +86,7 @@ object BaseTraits {
                             added: Seq[(BlockKey, BlockMetadata)])
         //def iterator(termID: Int): Option[MetadataIterator]
         def getNumberOfDocs(termID: Int): Long
-        def getMostFrequentTerms(num: Int): Array[Int]
+        def getAllMetadata: Array[(Int,TermMetadata)]
 
         def isDeleted(docID: Long): Boolean
         def markDeleted(docID: Long): Unit

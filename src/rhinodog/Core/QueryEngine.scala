@@ -14,7 +14,9 @@
 package rhinodog.Core
 
 import org.slf4j.LoggerFactory
+import rhinodog.Core.Utils.DocumentSerializer
 
+import scala.StringBuilder
 import scala.collection.mutable
 
 import Definitions._
@@ -42,20 +44,17 @@ class QueryEngine
     private val _buildIteratorTimer = dependencies.metrics.timer("Build Composite Iterator")
     private val _executeQueryTimer = dependencies.metrics.timer("Execute Query")
 
-    //this is iterator for querying persistent data
-    def buildTopLevelIterator(query: BooleanClause): ITermIterator = {
+    private def mapTermToID(clause: BooleanClause): BooleanClause = clause match {
+        case TermToken(term) => TermID(dependencies.repository.getTermID(term))
+        case ANDClause(children) => new ANDClause(children.map(mapTermToID))
+        case ORClause(children) => new ORClause(children.map(mapTermToID))
+        case TermID(x) => TermID(x)
+    }
+
+    //returns iterator for querying persistent data
+    private def buildTopLevelIterator(query: BooleanClause): ITermIterator = {
         val context = _buildIteratorTimer.time()
         val totalDocs = storage.getTotalDocs
-        def mapTermToID(clause: BooleanClause): BooleanClause
-        = clause match {
-            case TermToken(term) => TermID(dependencies.repository.getTermID(term))
-            case ANDClause(children) => new ANDClause(children.map(mapTermToID))
-            case ORClause(children) => new ORClause(children.map(mapTermToID))
-            case TermID(x) => TermID(x)
-        }
-        //TODO: repository add/create methods implementation into snapshotsReader
-        //TODO: repository's own methods implementation should use one transaction
-        //TODO: per request, as to avoid long running transactions
         val IDsONLY = mapTermToID(query)
         val snapshotReader = dependencies.repository.getSnapshotReader
         def getTermIterator(termID: Int) = {
@@ -71,7 +70,8 @@ class QueryEngine
                 new BlocksIterator(metaIterator,
                     dependencies.measureSerializer,
                     termFrequency,
-                    totalDocs)
+                    totalDocs,
+                    true)
             }
         }
         def mapClauseToIterator(clause: BooleanClause): ITermIterator
@@ -94,7 +94,7 @@ class QueryEngine
         topLevelIterator
     }
 
-    def executeQuery(topLevelIterator: ITermIterator, K: Int): mutable.PriorityQueue[(Float, Long)] ={
+    private def executeQuery(topLevelIterator: ITermIterator, K: Int): mutable.PriorityQueue[(Float, Long)] = {
         val context = _executeQueryTimer.time()
         val topK = new mutable.PriorityQueue[(Float, Long)]() (Ordering.by(_._1 * -1))
         var topKPopulated = false
@@ -110,11 +110,74 @@ class QueryEngine
                 }
             }
             topLevelIterator.next()
-            if (topKPopulated)
-                topLevelIterator.advanceToScore(topK.head._1 + floatMinMeaningfulValue)
+//            if (topKPopulated)
+//                topLevelIterator.advanceToScore(topK.head._1)
         }
         topLevelIterator.close()
         context.stop()
         topK
+    }
+
+    def executeQuery(queryTopClause: BooleanClause, K: Int = 10): mutable.PriorityQueue[(Float, Long)] = {
+        val topLevelIterator = buildTopLevelIterator(queryTopClause)
+        val result = executeQuery(topLevelIterator, K)
+        result
+    }
+
+    def explain(query: BooleanClause, docID: Long): String = {
+        val strBldr = new StringBuilder()
+        val totalDocs = storage.getTotalDocs
+        strBldr.append(s" TotalDocs = $totalDocs \n")
+        val serializedDoc = dependencies.repository.getDocument(docID).get
+        val analyzedDoc = new DocumentSerializer(dependencies.measureSerializer).deserialize(serializedDoc)
+        val terms = analyzedDoc.terms.map(x => x.termID -> x.measure).toMap
+        var offset = 0
+        def generateOffset(size: Int) = "    "*size
+        def explainTerm(termID: Int) = {
+            val meta = dependencies.metadataManager.getTermMetadata(termID)
+            if(meta.isEmpty) {
+                val ex = new IllegalArgumentException("unable to create Metadata Iterator")
+                logger.error("!!! buildTopLevelIterator",ex)
+                throw ex
+            }
+            else {
+
+                val termFrequency = meta.get.numberOfDocs
+                val IDF = BlocksIterator.computeIDF(totalDocs,termFrequency)
+                val measure = terms(termID)
+                val totalScore = measure.score * IDF
+                strBldr.append(
+                        generateOffset(offset)+ s" ==== TermID = $termID TermScore = $totalScore \n" +
+                        generateOffset(offset)+s" IDF = $IDF \n" +
+                        generateOffset(offset)+s" Measure score = ${measure.score} value = $measure \n")
+            }
+        }
+        def explainClause(clause: BooleanClause): Unit
+        = clause match {
+            case TermID(termID) => explainTerm(termID)
+            case ANDClause(children) => {
+                strBldr.append(generateOffset(offset))
+                strBldr.append(" ==== AND Clause score = sum of \n")
+                offset +=1
+                children.map(explainClause)
+                offset -=1
+            }
+            case ORClause(children) => {
+                strBldr.append(generateOffset(offset))
+                strBldr.append(" ==== OR Clause score = sum of \n")
+                offset +=1
+                children.map(explainClause)
+                offset -=1
+            }
+            case TermToken(_) => {
+                val ex = new IllegalArgumentException("token should be converted to tokenID first")
+                logger.error("!!! buildTopLevelIterator",ex)
+                throw ex
+            }
+        }
+        val IDsONLY = mapTermToID(query)
+        explainClause(IDsONLY)
+        strBldr.append("\n")
+        strBldr.toString()
     }
 }

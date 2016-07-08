@@ -28,7 +28,7 @@ class OkapiBM25MeasureTest {
     val serializer = new OkapiBM25MeasureSerializer()
     @Test
     def serializationTest(): Unit = {
-        val m = OkapiBM25Measure(-128, 1580)
+        val m = OkapiBM25Measure(127, 1580)
         val buf = ByteBuffer.allocate(serializer.numberOfBytesRequired)
         serializer.serialize(m, buf)
         val m1 = serializer.deserialize(ByteBuffer.wrap(buf.array()))
@@ -39,7 +39,7 @@ class OkapiBM25MeasureTest {
         // component 0 is used for DocIDs
         val components = (0 to serializer.numberOfComponentsRequired)
             .toArray.map(i => new Array[Int](1))
-        val m = OkapiBM25Measure(-128, 1580)
+        val m = OkapiBM25Measure(127, 1580)
         serializer.writeToComponents(m, components, 0)
         val m1 = serializer.readFromComponents(components, 0)
         assert(m == m1)

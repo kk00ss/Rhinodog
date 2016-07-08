@@ -18,16 +18,17 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 import org.apache.lucene.analysis.en
+import org.apache.lucene.analysis.standard.StandardAnalyzer
 import org.apache.lucene.analysis.util.CharArraySet
 import org.apache.lucene.document.{TextField, Field}
 import org.apache.lucene.index.{DirectoryReader, IndexWriter, IndexWriterConfig}
 import org.apache.lucene.queryparser.classic.QueryParser
-import org.apache.lucene.search.IndexSearcher
+import org.apache.lucene.search.{ScoreDoc, IndexSearcher}
 import org.apache.lucene.store._
 import org.slf4j.LoggerFactory
 import rhinodog.Analysis.EnglishAnalyzer
 import rhinodog.Core.Definitions.Configuration.storageModeEnum
-import rhinodog.Core.Definitions.Document
+import rhinodog.Core.Definitions.{TermMetadata, Document}
 import rhinodog.Core.Iterators.IteratorAND
 import rhinodog.Core.{ORClause, ANDClause, TermToken, InvertedIndex}
 import rhinodog.Core.MeasureFormats.{OkapiBM25MeasureSerializer, OkapiBM25Measure}
@@ -41,6 +42,7 @@ import java.io._
 import sun.nio.fs._
 
 import scala.collection._
+import scala.collection.mutable.ArrayBuffer
 
 object main {
 
@@ -57,61 +59,103 @@ object main {
     val analyzer = new en.EnglishAnalyzer(charArraySet)
     val luceneConfig = new IndexWriterConfig(analyzer)
     val iwriter = new IndexWriter(directory, luceneConfig)
-    val ireader = DirectoryReader.open(directory)
-    val isearcher = new IndexSearcher(ireader)
-    val parser = new QueryParser("fieldname", analyzer)
 
     def main(args: Array[String]): Unit = {
 
 
-//        val folder = new File("WikiText")
-//        logger.info("starting")
+        val folder = new File("WikiText")
+        logger.info("starting")
 //        folder.listFiles().par.foreach(file => {
 //            val text = scala.io.Source.fromFile(file).mkString
-//            val ID = invertedIndex.addDocument(Document(text))
-////            val doc = new org.apache.lucene.document.Document()
-////            doc.add(new Field("fieldname", text, TextField.TYPE_STORED))
-////            iwriter.addDocument(doc)
+//            val ID = invertedIndex.addDocument(Document(file.getName, text))
+//            //                    val doc = new org.apache.lucene.document.Document()
+//            //                    doc.add(new Field("ID", file.getName ,TextField.TYPE_STORED))
+//            //                    doc.add(new Field("fieldname", text, TextField.TYPE_STORED))
+//            //                    iwriter.addDocument(doc)
 //        })
+//        //        iwriter.commit()
+//        invertedIndex.flush()
 
-        //        val topLevelIterator = invertedIndex
-        //            .getQueryEngine()
-        //            .buildTopLevelIterator(TermToken("clock"))
-        //
-        //        val ret = invertedIndex.getQueryEngine().executeQuery(topLevelIterator, 10)
+        val allMeta = invertedIndex._mainComponents.metadataManager.getAllMetadata
+        val tmp = allMeta.sortWith(_._2.numberOfDocs > _._2.numberOfDocs)
+            .drop(1000).take(300)
+        val mostFrequentTerms = tmp.map(
+            (term) => invertedIndex._mainComponents.repository.getTerm(term._1))
+            .filter(_.forall(_.isLetter))
 
-        val mostFrequentTerms = invertedIndex
-            ._mainComponents
-            .metadataManager
-            .getMostFrequentTerms(1000)
-            .map(termID => invertedIndex._mainComponents.repository.getTerm(termID))
+        val K = 20
+        //        println("press Enter to start benchmark")
+        //        scala.io.StdIn.readLine()
 
-        val K = 10
-        println("press Enter to start benchmark")
-        scala.io.StdIn.readLine()
-
+        val resultsRhinodog = new ArrayBuffer[(String, Array[(Float, Long)])]()
         val start = System.currentTimeMillis()
-        for(i <- 0 until mostFrequentTerms.length - 1)
-            //for(j <- i+1 until mostFrequentTerms.length)
-            {
-            val andClause = new ORClause(Array(TermToken(mostFrequentTerms(i)), TermToken(mostFrequentTerms(i+1))))
-            val topLevelIterator = invertedIndex
-                .getQueryEngine()
-                .buildTopLevelIterator(andClause)
-            val ret = invertedIndex.getQueryEngine().executeQuery(topLevelIterator, K)
-        }
+        for (i <- 0 until mostFrequentTerms.length - 1)
+            for (j <- i + 1 until mostFrequentTerms.length) {
+                val andClause = new ORClause(Array(TermToken(mostFrequentTerms(i)),
+                    TermToken(mostFrequentTerms(j))))
+                //val andClause = TermToken(mostFrequentTerms(i))
+                val queryWords = mostFrequentTerms(i) + " " + mostFrequentTerms(j)
+                val ret = invertedIndex.getQueryEngine().executeQuery(andClause, K)
+                if("declin investig" == queryWords)
+                    for(x <- ret) {
+                        val ID = invertedIndex.getDocument(x._2).get.ID
+                        println("=======")
+                        println(ID)
+                        println(x._1)
+                        val explain = invertedIndex.getQueryEngine().explain(andClause,x._2)
+                        println(explain)
+                    }
+                resultsRhinodog += ((queryWords, ret.toArray))
+            }
         val time = System.currentTimeMillis() - start
         logger.info("Rhinodog search took {} ms", time)
 
+        val ireader = DirectoryReader.open(directory)
+        val isearcher = new IndexSearcher(ireader)
+        val standardAnalyzer = new StandardAnalyzer(charArraySet)
+        val parser = new QueryParser("fieldname", standardAnalyzer)
+
+        val resultsLucene = new ArrayBuffer[(String, Array[ScoreDoc])]()
         val start1 = System.currentTimeMillis()
-        for(i <- 0 until mostFrequentTerms.length - 1)
-            //for(j <- i+1 until mostFrequentTerms.length)
-            {
-            val query = parser.parse(mostFrequentTerms(i) +" "+mostFrequentTerms(i+1))
-            val hits = isearcher.search(query, K).scoreDocs
-        }
+        for (i <- 0 until mostFrequentTerms.length - 1)
+            for (j <- i + 1 until mostFrequentTerms.length) {
+                val queryWords = mostFrequentTerms(i) + " " + mostFrequentTerms(j)
+                val query = parser.parse(mostFrequentTerms(i) + " OR " + mostFrequentTerms(j))
+                //val query = parser.parse(mostFrequentTerms(i))
+                val hits = isearcher.search(query, K).scoreDocs
+                if("declin investig" == queryWords)
+                for (h <- hits) {
+                    val docID = ireader.document(h.doc)
+                        .getField("ID")
+                        .stringValue()
+                    println(docID)
+                    println(isearcher.explain(query, h.doc))
+                    println("======")
+                }
+                resultsLucene += ((queryWords, hits))
+            }
         val time1 = System.currentTimeMillis() - start1
         logger.info("Lucene search took {} ms", time1)
+
+        val resultsLucene2 = resultsLucene.map(x =>
+            x._2.map(y => (y.score,
+                ireader.document(y.doc)
+                    .getField("ID")
+                    .stringValue())))
+
+        val resultsRhinodog2 = resultsRhinodog.map(x =>
+            (x._1, x._2.map(y => (y._1, invertedIndex.getDocument(y._2).get.ID))))
+
+        val test = resultsRhinodog2.zip(resultsLucene2).map(all => {
+            val tmpMy = all._1._2.sortBy(_._1)
+            val tmpLucene = all._2.sortBy(_._1)
+            val test1 = tmpMy.count(x => tmpLucene.exists(y => y._2 == x._2))
+            val test2 = if (tmpLucene.length == 0 && tmpMy.length == 0) 1
+            else if (tmpLucene.length == 0 && tmpMy.length > 0) -1
+            else (test1 + 0f) / tmpLucene.length
+
+            (test2, all._1._1, tmpLucene.zip(tmpMy))
+        })
 
         logger.info("closing")
         invertedIndex.close()

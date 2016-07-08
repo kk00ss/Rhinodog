@@ -22,6 +22,16 @@ import rhinodog.Core.Utils.DocPostingsSerializer
 
 //TODO: add softNot and strongNot which would lower estimate for documents
 
+object BlocksIterator {
+    def computeIDF(totalDocs: Long, termFrequency: Long): Float = {
+        var result =
+            math.log(1+(totalDocs - termFrequency + 0.5D)
+                / (termFrequency + 0.5D)).asInstanceOf[Float]
+        if(result < 0) result = 0
+        result
+    }
+}
+
 class BlocksIterator
 (metaIterator: MetadataIteratorBase,
  measureSerializer: MeasureSerializerBase,
@@ -40,9 +50,7 @@ class BlocksIterator
     lazy val IDF: Float = if(useIDF) computeIDF else 1f
 
     private def computeIDF: Float = {
-        var tmp = math.log((totalDocs - termFrequency + 0.5) / (termFrequency + 0.5))
-                .asInstanceOf[Float]
-        if(tmp < 0) tmp = 0
+        val tmp = BlocksIterator.computeIDF(totalDocs, termFrequency)
         logger.trace("computeIDF termFrequency = {}, IDF = {}", termFrequency, tmp)
         return tmp
     }
@@ -127,14 +135,12 @@ class BlocksIterator
     def next(): Long = {
         if(segmentIterator.hasNext) segmentIterator.next()
         else {
-            if(blockBuffer.remaining() == 0 && metaIterator.hasNext)
+            if(!hasNextSegment && metaIterator.hasNext)
                 nextBlock()
-            if(blockBuffer.remaining() == 0) {
+            if(!hasNextSegment) {
                 //it will make currentDocID of it == -1
                 segmentIterator.next()
             } else {
-                if(blockBuffer.remaining() < 8)
-                    println()
                 nextSegmentMeta()
                 initSegmentIterator()
             }
@@ -148,7 +154,7 @@ class BlocksIterator
         while(currentScore < targetScore && hasNext) {
             var blockChanged = false
             //current block might have good MaxScore but it might be empty already
-            while ((targetScore > _blockMaxScore || blockBuffer.remaining() == 0)  &&
+            while ((targetScore > _blockMaxScore || !hasNextSegment)  &&
                 metaIterator.hasNext) {
                 nextBlock()
                 blockChanged = true
@@ -158,14 +164,14 @@ class BlocksIterator
             var segmentChanged = false
             //current segment might have good MaxScore but it might be empty already
             while ((targetScore > _segmentMaxScore || segmentIterator.currentDocID == -1) &&
-                blockBuffer.remaining() > segmentSkip) {
+                hasNextSegment) {
                 nextSegmentMeta()
                 segmentChanged = true
             }
             if (segmentChanged || blockChanged)
                 initSegmentIterator()
-            if(_segmentMaxScore >= targetScore)
-                segmentIterator.advance(targetScore)
+            if(_segmentMaxScore >= targetScore || (!hasNextSegment && !hasNextBlock))
+                segmentIterator.advance(targetScore / IDF)
         }
         return currentDocID
     }

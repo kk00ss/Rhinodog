@@ -34,10 +34,10 @@ package object Definitions {
      measure: Measure)
 
     case class Document
-    (text: String)
+    (ID: String, text: String)
 
     case class AnalyzedDocument
-    (terms: Seq[DocTerm])
+    (ID: String, terms: Seq[DocTerm])
 
     type SegmentSerialized = Array[Array[Int]]
 

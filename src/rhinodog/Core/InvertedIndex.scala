@@ -23,6 +23,7 @@ import com.codahale.metrics.{Slf4jReporter, JmxReporter, ConsoleReporter, Metric
 import org.slf4j.{Marker, LoggerFactory}
 import rhinodog.Analysis.LocalLexicon
 import rhinodog.Core.Definitions.BaseTraits.IAnalyzer
+import rhinodog.Core.Utils.DocumentSerializer
 
 //TODO: Config and measureSerializer type name could be read from storage if index is already initialized, or at least check if they are the same
 class InvertedIndex
@@ -161,6 +162,13 @@ class InvertedIndex
         } finally {
             sharedLock.unlock()
         }
+    }
+
+    val docSerializer = new DocumentSerializer(this.measureSerializer)
+
+    def getDocument(ID: Long): Option[AnalyzedDocument] = {
+        val serializedDoc = this._mainComponents.repository.getDocument(ID)
+        serializedDoc.map(x => docSerializer.deserialize(x))
     }
 
     def flush() = {

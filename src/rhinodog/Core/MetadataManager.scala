@@ -64,11 +64,7 @@ case class MetadataManager(measureSerializer: MeasureSerializerBase)
         ret
     }
 
-    override def getMostFrequentTerms(num: Int): Array[Int] =
-        metadataByTerm.toArray
-            .sortWith(_._2.numberOfDocs > _._2.numberOfDocs)
-            .map(_._1)
-            .take(num)
+    override def getAllMetadata: Array[(Int,TermMetadata)] = metadataByTerm.toArray
 
     private val restoreNodeMetadata =
         (key: BlockKey, buffer: ByteBuffer) => {

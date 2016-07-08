@@ -18,7 +18,7 @@ import org.junit._
 
 class IteratorsAndQueryingTests {
 
-
+    @Test
     def benchmark(): Unit = {
 
         for (i <- 1 to nTestsWithDifferentData) {
@@ -153,11 +153,11 @@ class IteratorsAndQueryingTests {
     }
 
 
-    val runLucene = false
+    val runLucene = true
     val N = 1000 * 10
 
-    val nTestsWithDifferentData = 100
-    val nTestsWithSameData = 100
+    val nTestsWithDifferentData = 10
+    val nTestsWithSameData = 10
 
     var accMy1 = 0l
     var accMy2 = 0l

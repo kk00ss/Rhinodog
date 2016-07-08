@@ -21,8 +21,11 @@ class DocumentSerializer
 (measureSerializer: MeasureSerializerBase) {
     def serialize (doc: AnalyzedDocument): DocumentSerialized = {
         val termsLength = 4 + doc.terms.length*(4+measureSerializer.numberOfBytesRequired)
-        val estimatedSize = termsLength
+        val idBytes = doc.ID.getBytes
+        val estimatedSize = termsLength + 4 + idBytes.length
         val output = ByteBuffer.allocate(estimatedSize)
+        output.putInt(idBytes.length)
+        output.put(idBytes)
         output.putInt(doc.terms.length)
         for(term <- doc.terms) {
             output.putInt(term.termID)
@@ -32,6 +35,9 @@ class DocumentSerializer
     }
     def deserialize (documentSerialized: DocumentSerialized): AnalyzedDocument = {
         val input = ByteBuffer.wrap(documentSerialized)
+        val idBytesLen = input.getInt()
+        val idBytes = new Array[Byte](idBytesLen)
+        input.get(idBytes,0,idBytesLen)
         val numOfTerms = input.getInt()
         val terms = new Array[DocTerm] (numOfTerms)
         for(i <- 0 until numOfTerms) {
@@ -39,7 +45,7 @@ class DocumentSerializer
             val measure = measureSerializer.deserialize(input)
             terms(i) = DocTerm(termID, measure)
         }
-        return AnalyzedDocument(terms)
+        return AnalyzedDocument(new String(idBytes), terms)
     }
 
 }
