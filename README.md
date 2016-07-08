@@ -4,10 +4,9 @@ Written for fun, work in progress. For understanding why this project was create
 Implementation of inverted index on top of LMDB with some interesting optimizations. Written for fun, work in progress.
 
 ##Current state
-* readiness - Limited features, not 100% tests coverage. 
-* Unit and regression tests - work in progress. 
+* readiness - Limited features, not 100% tests coverage, current implementation of compaction is not well tested yet.
 * Indexing performance -  on enwiki texs of size 569MB it takes 50sec with Core i7 4790K and SSD Samsung 840 EVO, which is about 40GB/Hour, which is 50% of Lucene's indexing performance on my hardware. Lucene's English analyzer is used, and similar approach in general, but updating B-tree is quite slow (write speed in TaskManager are much smaller) and Rhinodog uses ConcurrentSkipList for TermHash which is slower than Lucene's TermHash. ConcurrentSkipList - will help in developing better NRT (Near Real Time) search. 
-* Querying tests - were run on generated documents. Results vary from 2-3 times slower than Lucene to same 2-3 times faster than Lucene. This difference depend on how do query terms correlate with each other, if they are common words that occur in almost every document - Lucene is faster, the larger the difference in term frequencies of query terms - the better it is for Rhinodog. Educated guess would be - because Red-Black-Tree is faster than skip-lists. UPDATE: benchmaks on real text were incorrect because of differences in tokenization applied to query terms, which made Lucene and Rhinodog perform different queries.
+* Querying tests - were run on generated documents. Results vary from 2-3 times slower than Lucene to same 2-3 times faster than Lucene. This difference depend on how do query terms correlate with each other, if they are common words that occur in almost every document - Lucene is faster, the larger the difference in term frequencies of query terms - the better it is for Rhinodog. Educated guess would be - because Red-Black-Tree is faster than skip-lists. Currently result returned from Rhinodog are on avarage 89% same as Lucene (BM25 similarity with same parameters), difference come from different norm values. For some documents number of terms in a document is larger as calculated by Lucene - test uses same EnglishAnalyzer for both inverted index implementations.
 
 ##Plans
 * Multifield documents support
