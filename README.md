@@ -23,11 +23,8 @@ Implementation of inverted index on top of LMDB with some interesting optimizati
         val ID = invertedIndex.addDocument(Document(document))
         invertedIndex.flush()
         // 1 - is a termID, automatic conversion of word -> stem -> termID, will be added soon
-        val topLevelIterator = invertedIndex
-            .getQueryEngine()
-            .buildTopLevelIterator(ElementaryClause("mississippi")) //English analyzer lowercases every word
-
-        val ret = invertedIndex.getQueryEngine().executeQuery(topLevelIterator, 10)
+        val query = TermToken("mississippi") //English analyzer lowercases every word
+        val ret = invertedIndex.getQueryEngine().executeQuery(query, 10)
 ```
 
 ##Main features:
