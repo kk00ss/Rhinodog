@@ -25,11 +25,11 @@ import scala.collection.JavaConversions.mapAsScalaMap
 import scala.collection.mutable
 import scala.collection._
 
-case class TermKey(termID:Int, maxDocID: Long) extends Ordered[TermKey] {
+case class TermKey(termID:Int, docID: Long) extends Ordered[TermKey] {
     override def compare(that: TermKey): Int = {
         val termC = termID.compare(that.termID)
         if(termC != 0) return termC
-        return maxDocID.compare(that.maxDocID)
+        return docID.compare(that.docID)
     }
 }
 
@@ -93,7 +93,7 @@ class TermsDocsHash
                     currentTermID = entry._1.termID
                     blocksManager.reset(currentTermID)
                 }
-                blocksManager.add(new DocPosting(entry._1.maxDocID, entry._2))
+                blocksManager.add(new DocPosting(entry._1.docID, entry._2))
             })
             dataBeingFlushed = null
         }
