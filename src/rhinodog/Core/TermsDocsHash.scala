@@ -22,6 +22,8 @@ import org.slf4j.LoggerFactory
 import rhinodog.Core.Utils._
 
 import scala.collection.JavaConversions.mapAsScalaMap
+import scala.collection.mutable
+import scala.collection._
 
 case class TermKey(termID:Int, maxDocID: Long) extends Ordered[TermKey] {
     override def compare(that: TermKey): Int = {
@@ -37,34 +39,37 @@ class TermsDocsHash
     import config._
 
     val serializer = MetadataSerializer(mainComponents.measureSerializer)
-    private var writeCache = new ConcurrentSkipListMap[TermKey, Measure]()
-    private var dataBeingFlushed: ConcurrentSkipListMap[TermKey, Measure] = null
+
+    private var writeCache = SortedMap[TermKey, Measure]()
+    private var dataBeingFlushed: SortedMap[TermKey, Measure] = null
 
     private val flushTimer = mainComponents.metrics.timer("TermsDocsHash - flushTimer")
 
     /** use increasing timeouts for last terms of the document to finnish it's */
     def addDocument(docID: Long, docTerm: DocTerm): Boolean = {
         logger.trace("-> addDocuemnt -- termID = {} docID = {}", docTerm.termID, docID)
-        writeCache.put(TermKey(docTerm.termID, docID), docTerm.measure)
+        writeCache.synchronized {
+            writeCache += ((TermKey(docTerm.termID, docID), docTerm.measure))
+        }
         return true
     }
 
     def rotateWriteLog() = {
-        if(writeCache.size() > 0) {
+        if(writeCache.nonEmpty) {
             dataBeingFlushed = writeCache
-            writeCache = new ConcurrentSkipListMap[TermKey, Measure]()
+            writeCache = SortedMap[TermKey, Measure]()
+            //new mutable.ArrayBuffer[(TermKey, Measure)]()
         }
     }
 
     def flush() = {
         val context = flushTimer.time()
         val start = System.currentTimeMillis()
-        if (dataBeingFlushed != null && dataBeingFlushed.size() > 0) {
+        if (dataBeingFlushed != null && dataBeingFlushed.nonEmpty) {
             var currentTermID = dataBeingFlushed.headOption.get._1.termID
             val blocksManager = new BlocksWriter(mainComponents.measureSerializer,
                 currentTermID,
                 config.targetSize)
-            //val futures = mutable.ArrayBuffer[Future[Boolean]]()
             dataBeingFlushed.foreach(entry => {
                 if (currentTermID != entry._1.termID) {
                     //flush blocksManager content
@@ -86,14 +91,10 @@ class TermsDocsHash
                     //}
                     //re-init blocksManager
                     currentTermID = entry._1.termID
-//                    blocksManager = new BlocksWriter(mainComponents.measureSerializer,
-//                        currentTermID,
-//                        config.targetSize)
                     blocksManager.reset(currentTermID)
                 }
                 blocksManager.add(new DocPosting(entry._1.maxDocID, entry._2))
             })
-            //Await.ready(Future.sequence(futures), Duration.Inf)
             dataBeingFlushed = null
         }
         val time = System.currentTimeMillis() - start

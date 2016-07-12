@@ -64,17 +64,18 @@ object main {
 
 
         val folder = new File("WikiText")
-        logger.info("starting")
+//        logger.info("starting indexing ")
 //        folder.listFiles().par.foreach(file => {
 //            val text = scala.io.Source.fromFile(file).mkString
 //            val ID = invertedIndex.addDocument(Document(file.getName, text))
-//            //                    val doc = new org.apache.lucene.document.Document()
-//            //                    doc.add(new Field("ID", file.getName ,TextField.TYPE_STORED))
-//            //                    doc.add(new Field("fieldname", text, TextField.TYPE_STORED))
-//            //                    iwriter.addDocument(doc)
+////            val doc = new org.apache.lucene.document.Document()
+////            doc.add(new Field("ID", file.getName, TextField.TYPE_STORED))
+////            doc.add(new Field("fieldname", text, TextField.TYPE_STORED))
+////            iwriter.addDocument(doc)
 //        })
-//        //        iwriter.commit()
+//        //iwriter.commit()
 //        invertedIndex.flush()
+//        logger.info("done indexing ")
 
         val allMeta = invertedIndex._mainComponents.metadataManager.getAllMetadata
         val tmp = allMeta.sortWith(_._2.numberOfDocs > _._2.numberOfDocs)

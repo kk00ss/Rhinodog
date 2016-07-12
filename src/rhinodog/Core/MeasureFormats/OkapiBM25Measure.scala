@@ -20,25 +20,26 @@ import rhinodog.Core.Definitions._
 
 //TODO: load from settings
 object OkapiBM25 {
-    val avgTermsPerDoc = 3309 //500
+    val avgTermsPerDoc = 1000 //TODO: init from config
+    //TODO: add boosting
     val k = 1.2f
     val b = 0.75f
     val tmp1 = k + 1
     val tmp2 = 1 - b
-    def compute(freq: Int, norm: Int): Float = {
+    def compute(freq: Int, docLength: Int): Float = {
         val a = freq * OkapiBM25.tmp1
         val c = freq + OkapiBM25.k *
-            (OkapiBM25.tmp2 + OkapiBM25.b * norm / OkapiBM25.avgTermsPerDoc)
+            (OkapiBM25.tmp2 + OkapiBM25.b * docLength / OkapiBM25.avgTermsPerDoc)
         a / c
     }
 }
 
-case class OkapiBM25Measure(frequency: Short, norm: Int) extends Measure {
+case class OkapiBM25Measure(frequency: Short, docLength: Int) extends Measure {
     if(frequency < 0)
         throw new IllegalArgumentException("frequency cannot be negative or zero")
     type Self = OkapiBM25Measure
     def compare(that: OkapiBM25Measure) = this.score.compare(that.score)
-    def score: Float = OkapiBM25.compute(frequency, norm)
+    def score: Float = OkapiBM25.compute(frequency, docLength)
     def getSerializer = new OkapiBM25MeasureSerializer()
 }
 
@@ -61,7 +62,7 @@ class OkapiBM25MeasureSerializer extends MeasureSerializerBase {
     def serialize(_m: Measure, buf: ByteBuffer) = {
         val m = _m.asInstanceOf[OkapiBM25Measure]
         buf.putShort(m.frequency) //because it writes 8 lowest bits
-        buf.putInt(m.norm)
+        buf.putInt(m.docLength)
     }
     def deserialize(buf: ByteBuffer): Measure = {
         val freq = buf.getShort()
@@ -72,7 +73,7 @@ class OkapiBM25MeasureSerializer extends MeasureSerializerBase {
     def writeToComponents(_m: Measure, components: Array[Array[Int]], i: Int): Unit = {
         val m = _m.asInstanceOf[OkapiBM25Measure]
         components(1)(i) = m.frequency.asInstanceOf[Int]
-        components(2)(i) = m.norm
+        components(2)(i) = m.docLength
     }
     def readFromComponents(components: Array[Array[Int]], i: Int): Measure =
         OkapiBM25Measure(components(1)(i).asInstanceOf[Short], components(2)(i))
