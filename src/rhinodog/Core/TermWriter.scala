@@ -33,7 +33,7 @@ case class TermKey(termID:Int, docID: Long) extends Ordered[TermKey] {
     }
 }
 
-class TermsDocsHash
+class TermWriter
 (config: TermsDocsHashConfig) {
     private val logger = LoggerFactory.getLogger(this.getClass)
     import config._

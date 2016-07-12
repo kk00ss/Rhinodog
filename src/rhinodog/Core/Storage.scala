@@ -42,11 +42,11 @@ class Storage
 //    val termsDocsHash
 //    = new TermsDocsHash(TermsDocsHashConfig(mainComponents,GlobalConfig.index_targetBlockSize))
     val numCores = GlobalConfig.global_numCores
-    val termsDocsHashes = new Array[TermsDocsHash](numCores)
+    val termsDocsHashes = new Array[TermWriter](numCores)
     val termsDocsHashConfig = TermsDocsHashConfig(mainComponents,
                                                   GlobalConfig.storage_targetBlockSize)
     for(i <- 0 until numCores)
-        termsDocsHashes(i) = new TermsDocsHash(termsDocsHashConfig)
+        termsDocsHashes(i) = new TermWriter(termsDocsHashConfig)
 
     @volatile
     private var isOpen = true
