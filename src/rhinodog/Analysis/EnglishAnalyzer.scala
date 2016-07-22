@@ -24,7 +24,7 @@ import org.apache.lucene.util.Version
 import org.slf4j.LoggerFactory
 import rhinodog.Core.Definitions.BaseTraits.IAnalyzer
 import rhinodog.Core.Definitions._
-import rhinodog.Core.MeasureFormats.OkapiBM25Measure
+import rhinodog.Core.MeasureFormats.{BMLikeMeasure, OkapiBM25Measure}
 import scala.collection.JavaConverters._
 
 class EnglishAnalyzer() extends IAnalyzer {
@@ -88,7 +88,7 @@ class EnglishAnalyzer() extends IAnalyzer {
         tokenStream.end()
         tokenStream.close()
         val terms = lexicon.root2TokenInfo.values.toArray.map(token => {
-            val measure = OkapiBM25Measure(token.frequency.asInstanceOf[Short], totalTokenCount)
+            val measure = BMLikeMeasure(token.frequency.asInstanceOf[Short], totalTokenCount)
             DocTerm(token.ID, measure)
         })
         AnalyzedDocument(doc.ID, terms)

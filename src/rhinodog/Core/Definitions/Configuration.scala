@@ -63,7 +63,7 @@ object Configuration {
         //LMDB folder will be path + '\'+"InvertedIndex"
         def storage_path = propFactory.getStringProperty("storage.path","storageFolder").get()
         //storage space is acquired in chunks of this size
-        def storage_sizeIncreaseStep = propFactory.getLongProperty("storage.sizeIncreaseStep", 4*GB)
+        def storage_sizeIncreaseStep = propFactory.getLongProperty("storage.sizeIncreaseStep", 1*GB)
         // number of docIDs for which there will be single bitmap segment
         // smaller value means less efficient encoding, but less data to write on change
         def storage_bitSetSegmentRange = propFactory

@@ -39,7 +39,7 @@ object IntegerEncoder {
 }
 
 object DocPostingsSerializer {
-    val segmentSize = 128
+    val segmentSize = 64//128
 
     def framingSizeInBytes(numComponents: Int): Int = 8 + numComponents * 4
 

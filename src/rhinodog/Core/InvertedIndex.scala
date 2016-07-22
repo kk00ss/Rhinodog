@@ -54,7 +54,7 @@ class InvertedIndex
         logger.info("-> init")
         val watermark = "measureSerializer name: " + measureSerializer.getClass.getCanonicalName +
             " analyzer name: " + analyzer.getClass.getCanonicalName
-        val repository = new Repository(storageMode, watermark)
+        val repository = new Repository(storageMode, metrics, watermark)
         try {
             val metadataManager = new MetadataManager(measureSerializer)
 

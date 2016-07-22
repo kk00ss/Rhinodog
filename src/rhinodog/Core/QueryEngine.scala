@@ -149,7 +149,7 @@ class QueryEngine
                     val totalScore = measure.score * IDF
                     strBldr.append(
                         generateOffset(offset) + s" ==== TermID = $termID TermScore =$totalScore \n" +
-                            generateOffset(offset) + s" IDF = $IDF \n" +
+                            generateOffset(offset) + s" IDF = $IDF <= termFrequency = $termFrequency totalDocs = $totalDocs\n" +
                             generateOffset(offset) + s" Measure score = ${measure.score} value = $measure \n")
                 } else strBldr.append(
                     generateOffset(offset) + s" ==== TermID = $termID TermScore =0 \n")

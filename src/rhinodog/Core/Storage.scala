@@ -90,12 +90,12 @@ class Storage
                 compactionsRunning.get() < GlobalConfig.global_numCores) {
                 //starting new compaction
                 Future {
-                    logger.info("timerTask starting new compaction")
                     compactionsOrCloseLock.readLock().lock()
                     compactionsRunning.incrementAndGet()
                     _compactionsRunning.inc()
                     try {
                         if(isOpen) {
+                            logger.info("timerTask starting new compaction")
                             val compactionToRun = scheduledCompactions.pollLast()
                             _numScheduledCompactions.dec()
                             //compute merges

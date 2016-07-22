@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.{AtomicInteger, AtomicLong}
 import java.util.concurrent.locks.{ReentrantLock, ReentrantReadWriteLock}
 import java.util.function.LongBinaryOperator
 
+import com.codahale.metrics.MetricRegistry
 import org.fusesource.lmdbjni._
 import org.slf4j.LoggerFactory
 import rhinodog.Core.Definitions.BaseTraits._
@@ -31,22 +32,34 @@ import scala.collection.JavaConversions.{asScalaIterator, mapAsScalaMap}
 import scala.collection.Seq
 
 class Repository(storageMode: storageModeEnum.storageMode,
-                     //full names of measure, analyzer
-                     watermark: String)
+                 metrics: MetricRegistry,
+                 //full names of measure, analyzer
+                 watermark: String)
     extends IRepository with AutoCloseable {
     private val logger = LoggerFactory.getLogger(this.getClass)
 
+    private val _getBlock = metrics.timer("repository - getBlockTimer")
+
+    @volatile
     private var environment: Env = null
 
+    @volatile
     private var postingsDB: Database = null
+    @volatile
     private var metadataDB: Database = null
+    @volatile
     private var documentsDB: Database = null
+    @volatile
     private var numberOfDeletedDB: Database = null
+    @volatile
     private var roaringBitmapsDB: Database = null
 
+    @volatile
     private var term2ID_DB: Database = null
+    @volatile
     private var ID2Term_DB: Database = null
 
+    @volatile
     private var indexStatistics_DB: Database = null
 
     val numberOfDatabases = 8
@@ -56,6 +69,8 @@ class Repository(storageMode: storageModeEnum.storageMode,
     private var dataBeingFlushed: WriteCache = null
 
     private val writeCacheSHLock = new ReentrantReadWriteLock(true)
+
+    private val allReadsLock = new ReentrantReadWriteLock(true)
 
     private val flushInProgressLock = new ReentrantLock()
     //in order to close gracefully we need to wait for all of the running queries
@@ -78,14 +93,16 @@ class Repository(storageMode: storageModeEnum.storageMode,
     }
 
     writeCacheSHLock.writeLock().lock()
+    allReadsLock.writeLock().lock()
     try {
         openEnvironment()
     }
     finally {
         writeCacheSHLock.writeLock().unlock()
+        allReadsLock.writeLock().unlock()
     }
 
-    private def openEnvironment(mapSize: Long = 0): Unit = {
+    private def openEnvironment(mapSize: Long = 0, reopen: Boolean = false): Unit = {
         logger.info("-> openEnvironment")
         val newDir = new File(GlobalConfig.storage_path + File.separator + "InvertedIndex")
         var createdNewFolder = false
@@ -95,6 +112,7 @@ class Repository(storageMode: storageModeEnum.storageMode,
             logger.error("!!! openEnvironment", ex)
             throw ex
         }
+        if(!reopen)
         if (!newDir.exists())
             if (this.storageMode == storageModeEnum.CREATE ||
                 this.storageMode == storageModeEnum.READ_WRITE) {
@@ -193,6 +211,27 @@ class Repository(storageMode: storageModeEnum.storageMode,
         logger.info("closeEnvironment ->")
     }
 
+    def getFromLMDB(key: Array[Byte], db: Database, tx: Transaction = null): Array[Byte] = {
+        var ret: Array[Byte] = null
+        allReadsLock.readLock().lock()
+        try {
+            if(tx == null) ret = db.get(key)
+            else ret = db.get(tx, key)
+            return ret
+        }
+        catch {
+            case ex: LMDBException => {
+                if (ex.getErrorCode == LMDBException.MAP_RESIZED)
+                    if(tx == null) ret = db.get(key)
+                    else ret = db.get(tx, key)
+                return ret
+            }
+        }
+        finally {
+            allReadsLock.readLock().unlock()
+        }
+    }
+
     //GlobalLexicon section
     val termIDLock = new ReentrantLock()
 
@@ -202,7 +241,7 @@ class Repository(storageMode: storageModeEnum.storageMode,
         if (result == -1) {
             //checking LMDB
             val key = term.getBytes
-            var termIDArr = term2ID_DB.get(key)
+            var termIDArr = getFromLMDB(key, term2ID_DB)
             if (termIDArr == null) {
                 termIDLock.lock()
                 //Double checked locking
@@ -211,7 +250,7 @@ class Repository(storageMode: storageModeEnum.storageMode,
                     result = writeCache.newTerms.getOrElse(term, -1)
                     if (result == -1) {
                         //checking LMDB
-                        termIDArr = term2ID_DB.get(term.getBytes)
+                        termIDArr = getFromLMDB(key, term2ID_DB)
                         if (termIDArr != null)
                             result = ByteBuffer.wrap(termIDArr).getInt
                         else {
@@ -237,7 +276,7 @@ class Repository(storageMode: storageModeEnum.storageMode,
             if (ret != null) return ret
         }
         val key = ByteBuffer.allocate(4).putInt(id).array()
-        val result = ID2Term_DB.get(key)
+        val result = getFromLMDB(key,ID2Term_DB) //ID2Term_DB.get(key)
         if (result == null) return null
         else new String(result)
     }
@@ -319,23 +358,26 @@ class Repository(storageMode: storageModeEnum.storageMode,
         // search by exact key only
         def getBlock(blockKey: BlockKey): BlockDataSerialized = {
             logger.debug("SnapshotReader.getBlock blockKey = {}", blockKey)
+            val context = _getBlock.time()
             var ret: BlockDataSerialized = null
-            if (max_Flushed_DocID.get() < blockKey.maxDocID /*&& !flushLock.isWriteLocked*/ ) {
-                ret = _writeCache.addedBlocks.get(blockKey)._1
-                if (ret == null && _dataBeingFlushed != null)
-                    ret = _dataBeingFlushed.addedBlocks.get(blockKey)._1
+            try {
+                if (max_Flushed_DocID.get() < blockKey.maxDocID /*&& !flushLock.isWriteLocked*/ ) {
+                    ret = _writeCache.addedBlocks.get(blockKey)._1
+                    if (ret == null && _dataBeingFlushed != null)
+                        ret = _dataBeingFlushed.addedBlocks.get(blockKey)._1
 
-            }
-            if (ret == null) {
-                //if not found - go to LMDB
-                val key = blockKey.serialize
-                ret = postingsDB.get(readTx, key)
+                }
                 if (ret == null) {
-                    val ex = new IllegalStateException("required block is absent")
-                    logger.error("!!! SnapshotReader.getBlock", ex)
-                    throw ex
-                } else logger.debug("SnapshotReader.getBlock found in LMDB")
-            } else logger.debug("SnapshotReader.getBlock found in cache")
+                    //if not found - go to LMDB
+                    val key = blockKey.serialize
+                    ret = getFromLMDB(key,postingsDB,readTx) //postingsDB.get(readTx, key)
+                    if (ret == null) {
+                        val ex = new IllegalStateException("required block is absent")
+                        logger.error("!!! SnapshotReader.getBlock", ex)
+                        throw ex
+                    } else logger.debug("SnapshotReader.getBlock found in LMDB")
+                } else logger.debug("SnapshotReader.getBlock found in cache")
+            } finally { context.close() }
             return ret
         }
 
@@ -370,12 +412,24 @@ class Repository(storageMode: storageModeEnum.storageMode,
                 }
             }
             if (ret == null) {
-                val cursor = postingsDB.bufferCursor(readTx)
-                val rc = cursor.seekRange(blockKey.serialize)
-                if (rc) {
-                    actualBlockKey = BlockKey.deserialize(cursor.keyBytes())
-                    if (actualBlockKey.termID == termID)
-                        ret = cursor.valBytes()
+                def getFunc =  {
+                    allReadsLock.readLock().lock()
+                    try {
+                        val cursor = postingsDB.bufferCursor(readTx)
+                        val rc = cursor.seekRange(blockKey.serialize)
+                        if (rc) {
+                            actualBlockKey = BlockKey.deserialize(cursor.keyBytes())
+                            if (actualBlockKey.termID == termID)
+                                ret = cursor.valBytes()
+                        }
+                    } finally {allReadsLock.readLock().unlock()}
+                }
+                try {
+                    getFunc
+                } catch {
+                    case ex: LMDBException => if(ex.getErrorCode == LMDBException.MAP_RESIZED) {
+                        getFunc
+                    }
                 }
             } else logger.debug("SnapshotReader.seekBlock found in cache")
             if (ret != null) {
@@ -570,8 +624,11 @@ class Repository(storageMode: storageModeEnum.storageMode,
                         val currentSize = this.environment.info().getMapSize
                         val increaseStep = GlobalConfig.storage_sizeIncreaseStep.get()
                         val newSize = currentSize + increaseStep
+                        //prevent all reads
+                        allReadsLock.writeLock().lock()
                         closeEnvironment()
-                        openEnvironment(newSize)
+                        openEnvironment(newSize, true)
+                        allReadsLock.writeLock().unlock()
                         //secondAttempt
                         logger.warn("actualFlush -- MAP_FULL oldSize = {} newSize = {}",currentSize,newSize)
                         actualFlush(data,
@@ -585,10 +642,16 @@ class Repository(storageMode: storageModeEnum.storageMode,
                         throw ex
                     }
                 } catch {
-                    case ex: Exception => abort(e)
+                    case e: Exception => {
+                        abort(e)
+                        throw e
+                    }
                 }
             }
-            case e: Exception => abort(e)
+            case e: Exception => {
+                abort(e)
+                throw e
+            }
         } finally {
             if (!isAborted) {
                 tx.commit()
@@ -617,7 +680,7 @@ class Repository(storageMode: storageModeEnum.storageMode,
         logger.debug("addDocument docID = {}", docID)
         val key = ByteBuffer.allocate(8)
         key.putLong(docID)
-        val doc = this.documentsDB.get(key.array())
+        val doc = getFromLMDB(key.array(),documentsDB) //documentsDB.get(key.array())
         if (doc != null) {
             logger.debug("getDocument document found")
             return Some(doc)
